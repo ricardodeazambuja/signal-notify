@@ -1,0 +1,18 @@
+[package]
+name = "kyber1024_py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "kyber1024_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
+# Round-3 CRYSTALS-Kyber-1024 — the KEM Signal's PQXDH uses (KeyType byte 0x08),
+# NOT FIPS-203 ML-KEM. Same crate + version + feature libsignal v0.96.4 depends
+# on, so encaps/decaps are byte-identical to the phone.
+# Both features, matching libsignal: `kyber` selects round-3 Kyber1024; the
+# kyber1024 module reuses the `mlkem1024` wire types (MlKem1024PublicKey, etc.).
+libcrux-ml-kem = { version = "0.0.8", default-features = false, features = ["kyber", "mlkem1024"] }
+rand_core = { version = "0.9", features = ["os_rng"] }

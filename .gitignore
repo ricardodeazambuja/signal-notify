@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Rust build artifacts (spqr_py binding). We commit source + Cargo.lock only;
+# target/ is platform-specific and hundreds of MB. The compiled .so is installed
+# into the Python env by maturin, outside the repo.
+rust/**/target/
+**/*.so
+
+# Local account state (never commit account keys); second entry is the
+# legacy pre-own-dir location.
+.local/share/signal-notify/
+.local/share/signal-cli/
+
+# Your real run-config lives here — it holds your number / recipients.
+# Only notify.example.yaml (placeholder values) is committed.
+notify.yaml
+notify.*.yaml
+*.local.yaml
+
+# Anything derived from a real Signal account (captured envelopes, dumps,
+# decrypted bodies, debug logs) — MUST NEVER be committed. See
+# docs/native_caveats.md #18 "Personal-account data handling".
+captures/
+*.envelope
+

@@ -1,0 +1,4 @@
+# Pin the compiler for reproducible builds (see ../spqr_py/PROVENANCE.md rationale).
+[toolchain]
+channel = "1.96.1"
+components = ["rustc", "cargo"]

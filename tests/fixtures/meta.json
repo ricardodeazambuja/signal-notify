@@ -1,0 +1,6 @@
+{
+  "body": "frozen fixture reply \ud83d\udccc",
+  "timestamp": 1751300000123,
+  "aci": "00000000-0000-0000-0000-0000000000aa",
+  "note": "PREKEY Note-to-Self sync envelope; decrypts via the full PQXDH+SPQR+DoubleRatchet receive stack"
+}

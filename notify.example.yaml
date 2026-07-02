@@ -1,0 +1,37 @@
+# Example config for `signal-notify run` (and the notify_from_config API).
+#
+# Two-stage filter:
+#   1. push_keywords    — which alerts get sent at ALL. Anything not matching
+#                         is left for the producer's own output, no push.
+#                         (Empty/omitted => push everything.)
+#   2. critical_keywords— of those that get sent, which bypass quiet hours.
+
+channels:
+  signal:
+    enabled: true
+    note_to_self: true
+    # recipient: "+15551234567"   # send to someone/group instead of Note-to-Self
+    # account: "+15557654321"     # account selector (number / ACI, multi-account setups)
+
+# Only alerts whose text contains one of these substrings get pushed.
+# Match is case-sensitive substring. Comment out / leave empty to push all.
+push_keywords:
+  - "ALERT"
+  - "ERROR"
+
+# Of pushed alerts, these bypass quiet hours and ring at any time.
+critical_keywords:
+  - "ERROR"
+
+quiet_hours:
+  enabled: true
+  start: "22:00"
+  end: "07:00"
+
+# Signal message length cap — batch this many alert lines per message.
+max_per_message: 8
+
+# Optional: prepend a marker to alerts whose text contains the substring.
+prefixes:
+  "ERROR": "🛑"
+  "ALERT": "⚠️"

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # spqr's build.rs compiles its .proto files via prost-build, which
+      # shells out to protoc; the runner image doesn't ship it.
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # rust-toolchain.toml in each crate pins the compiler; rustup (preinstalled
+      # on the runner) auto-installs the pinned version on first build.
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust/kyber1024_py
+            rust/spqr_py
+
+      - name: Create venv and install package
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e '.[test]' maturin
+
+      # --locked (inside build.sh) makes a drifted Cargo.lock a hard error,
+      # enforcing the reproducibility contract in rust/*/PROVENANCE.md.
+      - name: Build Rust bindings (kyber1024_py + spqr_py, locked)
+        run: PYTHON="$PWD/.venv/bin/python" bash rust/build.sh
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest -q

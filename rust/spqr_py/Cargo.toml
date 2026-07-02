@@ -1,0 +1,18 @@
+[package]
+name = "spqr_py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "spqr_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
+# Pinned to the immutable commit behind tag v1.5.1 (what official libsignal
+# v0.96.4 depends on), not the movable tag name.
+spqr = { git = "https://github.com/signalapp/SparsePostQuantumRatchet.git", rev = "f2589fef855c10f39d72634dab3d14654dd410bf" }
+# Only needed to build an OS-backed RNG for spqr::send. We use the SAME rand_core
+# (0.9.x) that spqr resolves, so its CryptoRng bound is satisfied by the exact
+# trait — a mismatched rand version compiles the wrong CryptoRng and fails.
+rand_core = { version = "0.9", features = ["os_rng"] }

@@ -1,0 +1,10 @@
+# Pin the compiler for reproducible builds. This trades longevity (if this exact
+# rustc can no longer be fetched, the build fails) for exactness (every rebuild
+# uses the same compiler that produced our committed Cargo.lock). Reproducibility
+# was explicitly prioritized over convenience for this binding.
+#
+# To move forward deliberately: bump this version, re-run rust/build.sh, and
+# commit the regenerated Cargo.lock in the same change.
+[toolchain]
+channel = "1.96.1"
+components = ["rustc", "cargo"]

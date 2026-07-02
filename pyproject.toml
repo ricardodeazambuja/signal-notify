@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signal-notify"
+dynamic = ["version"]
+description = "Notify yourself via Signal (Note-to-Self), pure Python: QR device-linking, native send/receive, quiet hours, batching, and file-based alert dedupe."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Ricardo de Azambuja" }]
+keywords = ["signal", "notifications", "note-to-self", "alerts", "ai-agent"]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications :: Chat",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "qrcode>=7",
+    "PyYAML>=5.4",
+    # ML-KEM-1024 (PQXDH) requires the mlkem primitive, added in cryptography 44
+    # (bundled OpenSSL >= 3.5). The API is exposed as
+    # cryptography.hazmat.primitives.asymmetric.mlkem.
+    "cryptography>=44",
+    "websockets>=10.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+signal-notify = "signalnotify.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "signalnotify._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+signalnotify = ["native/signal-ca.pem"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

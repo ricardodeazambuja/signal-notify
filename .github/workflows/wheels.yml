@@ -1,0 +1,70 @@
+name: Wheels
+
+# Prebuilt abi3 wheels for the two post-quantum Rust bindings, so users don't
+# need a Rust toolchain. One wheel per platform covers CPython >= 3.9
+# (abi3-py39). --locked keeps the reproducibility contract from
+# rust/*/PROVENANCE.md: a drifted Cargo.lock fails the build.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: ${{ matrix.crate }} linux-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [kyber1024_py, spqr_py]
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust/${{ matrix.crate }}
+          target: ${{ matrix.target }}
+          manylinux: auto
+          # spqr's build.rs needs protoc (via prost-build); the manylinux
+          # container doesn't ship it. manylinux images are yum-based
+          # (CentOS/AlmaLinux); apt-get is a fallback for other base images.
+          before-script-linux: |
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y protobuf-compiler
+            else
+              apt-get update && apt-get install -y protobuf-compiler
+            fi
+          args: --release --locked --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.crate }}-linux-${{ matrix.target }}
+          path: rust/${{ matrix.crate }}/dist
+
+  macos:
+    name: ${{ matrix.crate }} macos-arm64
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [kyber1024_py, spqr_py]
+    steps:
+      - uses: actions/checkout@v4
+      # spqr's build.rs needs protoc (via prost-build); the macos runner
+      # doesn't ship it.
+      - name: Install protoc
+        run: brew install protobuf
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust/${{ matrix.crate }}
+          args: --release --locked --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.crate }}-macos-arm64
+          path: rust/${{ matrix.crate }}/dist
+
+  # PyPI publishing is deliberately NOT wired up yet: the package names
+  # (kyber1024_py / spqr_py) are unregistered and may need namespacing
+  # (e.g. signal-notify-kyber1024). Once names are settled, add a job here
+  # gated on the tag that downloads the artifacts and runs
+  # `maturin upload` with a trusted-publisher or MATURIN_PYPI_TOKEN.
