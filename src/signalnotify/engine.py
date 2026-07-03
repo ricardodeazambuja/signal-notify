@@ -95,8 +95,9 @@ def notify_from_config(cfg: dict, active_path, notified_path, *,
         new = critical
 
     # Stage 3: send.
+    enabled = bool(signal_cfg.get("enabled"))
     sent_all = True
-    if signal_cfg.get("enabled"):
+    if enabled:
         header = f"{app_name} — {now.strftime('%Y-%m-%d %H:%M')}"
         sent_all = _sender.send(
             new,
@@ -115,7 +116,11 @@ def notify_from_config(cfg: dict, active_path, notified_path, *,
         # push once quiet hours end.
         info_handled = {a for a in all_new if not _is_pushable(a, push_keywords)}
         diff.commit(set(new) | info_handled)
-        out(f"notify: sent {len(new)} new alert(s)")
+        if enabled:
+            out(f"notify: sent {len(new)} new alert(s)")
+        else:
+            out(f"notify: signal channel disabled; "
+                f"{len(new)} new alert(s) marked handled (NOT sent)")
         return 0
     err("notify: send failed; will retry next cycle")
     return 1

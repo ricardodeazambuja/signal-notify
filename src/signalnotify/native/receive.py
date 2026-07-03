@@ -485,7 +485,8 @@ def receive(*, config_path=None, account=None, timeout: int | None = None,
         from .messaging import find_account_config
         config_path = find_account_config(account)
         if not config_path:
-            log.error("no native Signal account configuration found")
+            log.error("no native Signal account configuration found "
+                      "(run: signal-notify link)")
             return []
     return asyncio.run(_receive_async(config_path, effective, max_messages, ws_url,
                                       drain=drain, journal=journal,
@@ -523,7 +524,8 @@ def listen(callback, *, config_path=None, account=None, poll_interval: int = 5,
         from .messaging import find_account_config
         config_path = find_account_config(account)
         if not config_path:
-            log.error("no native Signal account configuration found")
+            log.error("no native Signal account configuration found "
+                      "(run: signal-notify link)")
             return
     failures = 0
     while True:

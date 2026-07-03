@@ -55,7 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "last-resort prekeys if due (2-day cadence)")
 
     rp = sub.add_parser(
-        "run", help="diff alert files and push new alerts (config-driven)")
+        "run", help="diff alert files and push new alerts (config-driven)",
+        epilog="Config schema: see notify.example.yaml in the repo "
+               "(or the signalnotify.engine module docstring).")
     rp.add_argument("--config", required=True, help="notify-config YAML path")
     rp.add_argument("--active", required=True, help="active-alerts file path")
     rp.add_argument("--notified", required=True, help="notified-alerts file path")
@@ -91,13 +93,17 @@ def main(argv=None) -> int:
         if not args.message and not args.attach:
             print("send: pass -m and/or --attach", file=sys.stderr)
             return 2
-        ok = send_message(
-            args.message,
-            recipient=args.recipient,
-            note_to_self=args.recipient is None,
-            account=args.account,
-            attachments=args.attach or None,
-        )
+        try:
+            ok = send_message(
+                args.message,
+                recipient=args.recipient,
+                note_to_self=args.recipient is None,
+                account=args.account,
+                attachments=args.attach or None,
+            )
+        except Exception as e:  # e.g. DNS/offline: URLError escapes the shield
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
         return 0 if ok else 1
 
     if args.cmd == "link":
@@ -113,17 +119,26 @@ def main(argv=None) -> int:
             return 1
 
     if args.cmd == "receive":
+        from .native.messaging import find_account_config
         from .native.receive import receive, receive_note_to_self
 
+        if not find_account_config(args.account):
+            print("ERROR: no native Signal account configuration found "
+                  "(run: signal-notify link)", file=sys.stderr)
+            return 1
         fn = receive_note_to_self if args.note_to_self else receive
         # maintain=True: cron-driven receivers are long-lived accounts too;
         # upkeep is internally throttled to the 2-day refresh interval.
-        msgs = fn(
-            account=args.account,
-            idle_timeout=args.timeout,
-            max_messages=args.max_messages,
-            maintain=True,
-        )
+        try:
+            msgs = fn(
+                account=args.account,
+                idle_timeout=args.timeout,
+                max_messages=args.max_messages,
+                maintain=True,
+            )
+        except Exception as e:  # e.g. DNS/offline errors from the websocket
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
         rc = 0
         for m in msgs:
             tag = "note-to-self" if m.note_to_self else (m.source_name or m.source or "?")
@@ -147,7 +162,21 @@ def main(argv=None) -> int:
         return _doctor(args.account, maintain=args.maintain)
 
     if args.cmd == "run":
-        cfg = load_config(args.config)
+        import os
+
+        import yaml
+
+        # A missing config must be a hard error: load_config() would return {}
+        # and the engine would then mark every new alert as handled without
+        # sending anything — a --config typo would silently eat alerts.
+        if not os.path.exists(args.config):
+            print(f"run: config file not found: {args.config}", file=sys.stderr)
+            return 2
+        try:
+            cfg = load_config(args.config)
+        except yaml.YAMLError as e:
+            print(f"run: invalid YAML in {args.config}: {e}", file=sys.stderr)
+            return 2
         return notify_from_config(cfg, args.active, args.notified,
                                   app_name=args.app_name)
 
