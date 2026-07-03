@@ -77,12 +77,16 @@ class Poly:
         self.coeffs = coeffs
 
     def compute_at(self, x: int) -> int:
+        # Horner's method with the field mul inlined via local table refs;
+        # this is the innermost loop of erasure decoding under packet loss.
+        exp, log = _EXP, _LOG
+        if x == 0:
+            return self.coeffs[0] if self.coeffs else 0
+        lx = log[x]
         out = 0
-        xp = 1
-        for c in self.coeffs:
-            if c:
-                out ^= gf_mul(c, xp)
-            xp = gf_mul(xp, x)
+        for c in reversed(self.coeffs):
+            # out = out * x + c   (mul and add in GF(2^16))
+            out = (exp[log[out] + lx] if out else 0) ^ c
         return out
 
     def serialize(self) -> bytes:
@@ -104,26 +108,36 @@ class Poly:
         n = len(pts)
         if n == 0:
             return Poly([])
+        exp, log, order = _EXP, _LOG, _ORDER
+        xs = [p[0] for p in pts]
         result = [0] * n
         for i in range(n):
-            xi, yi = pts[i]
+            xi = xs[i]
+            yi = pts[i][1]
             # Build basis numerator PRODUCT_{j!=i}(x - xj) and denominator.
             basis = [1]
             denom = 1
+            ldenom = 0
             for j in range(n):
                 if j == i:
                     continue
-                xj = pts[j][0]
-                # multiply basis by (x - xj) == (x + xj) in GF(2)
+                xj = xs[j]
+                lxj = log[xj] if xj else None
                 new = [0] * (len(basis) + 1)
                 for k, c in enumerate(basis):
-                    new[k] ^= gf_mul(c, xj)   # c * xj  (the -xj term)
-                    new[k + 1] ^= c           # c * x
+                    if c and lxj is not None:
+                        new[k] ^= exp[log[c] + lxj]   # c * xj  (the -xj term)
+                    new[k + 1] ^= c                   # c * x
                 basis = new
-                denom = gf_mul(denom, xi ^ xj)
-            scale = gf_div(yi, denom)
-            for k, c in enumerate(basis):
-                result[k] ^= gf_mul(c, scale)
+                ldenom += log[xi ^ xj]                # multiply denom (in log space)
+            denom = exp[ldenom % order]
+            # scale = yi / denom
+            scale = 0 if yi == 0 else exp[(log[yi] - log[denom]) % order]
+            if scale:
+                lscale = log[scale]
+                for k, c in enumerate(basis):
+                    if c:
+                        result[k] ^= exp[log[c] + lscale]
         return Poly(result)
 
 
