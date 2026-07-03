@@ -292,11 +292,14 @@ material under heavy packet loss), and PyPI publishing.
 This project is inspired by and built upon the design of these outstanding open source repositories:
 *   [AsamK/signal-cli](https://github.com/AsamK/signal-cli) — Historical reference for the account-store layout and provisioning patterns; signal-notify no longer uses or shares state with it.
 *   [signalapp/libsignal](https://github.com/signalapp/libsignal) — The cryptographic protocol specification defining the X3DH key agreement and Double Ratchet systems.
+*   [signalapp/SparsePostQuantumRatchet](https://github.com/signalapp/SparsePostQuantumRatchet) — Signal's post-quantum triple-ratchet crate. `signalnotify/native/pure/spqr.py` is a faithful pure-Python port of v1.5.1 (byte-compatible state and wire format); the `rust/spqr_py` oracle binds the original for differential testing.
 
 ---
 
 ## License
 AGPL-3.0-or-later — see [LICENSE](LICENSE). Same license as the Signal source
-it interoperates with (`libsignal`, `Signal-Android`, `Signal-Server`, and the
-`SparsePostQuantumRatchet` crate this project binds are all AGPL-3.0).
+it interoperates with and derives from: `libsignal`, `Signal-Android`,
+`Signal-Server`, and the `SparsePostQuantumRatchet` crate — of which
+`signalnotify/native/pure/spqr.py` is a direct pure-Python port (the optional
+`rust/spqr_py` test oracle still binds the crate itself) — are all AGPL-3.0.
 
