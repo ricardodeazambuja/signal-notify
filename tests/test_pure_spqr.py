@@ -130,6 +130,41 @@ def test_cross_out_of_order():
         assert ka == kb
 
 
+def test_es_blob_handoff_rust_to_pure():
+    """The 2080-byte encapsulation state never crosses the wire, so its
+    libcrux byte layout is only exercised when a handoff lands on a state that
+    carries it. Drive Rust into CT1_SAMPLED (holding ``es``), hand to pure, and
+    require pure's ``encaps2`` to consume Rust's ``es`` bytes correctly."""
+    from signalnotify.native.pure.spqr import PqRatchetStatePB, States
+
+    def kind_of(state):
+        sp = PqRatchetStatePB.decode(state)
+        return "v0" if sp.v1 is None else States.from_pb(sp.v1).kind
+
+    a = rust.initial_state(AUTH, False, MJ, MO)
+    b = rust.initial_state(AUTH, True, MJ, MO)
+    for _ in range(60):
+        a, m, _ = rust.send(a)
+        b, _ = rust.recv(b, m)
+        b, m, _ = rust.send(b)
+        a, _ = rust.recv(a, m)
+        if kind_of(b) == "ct1_sampled":
+            break
+    else:
+        pytest.fail("Rust never reached CT1_SAMPLED")
+
+    st = States.from_pb(PqRatchetStatePB.decode(b).v1)
+    assert st.kind == "ct1_sampled" and len(st.es) == 2080
+
+    for step in range(20):
+        a, m, ka = PY.send(a)
+        b, kb = PY.recv(b, m)
+        assert ka == kb, f"es-handoff A->B {step}"
+        b, m, kb = PY.send(b)
+        a, ka = PY.recv(a, m)
+        assert ka == kb, f"es-handoff B->A {step}"
+
+
 def test_cross_chaos():
     # Randomized send/drop schedule; every delivered message key must agree.
     rng = random.Random(2026)
