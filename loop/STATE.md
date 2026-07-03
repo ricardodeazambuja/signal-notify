@@ -34,11 +34,18 @@ Rust bindings remain in-repo as optional differential-test oracles only.
 - [DONE] Step 6 wired pure as DEFAULT in kem.py/ratchet.py (env override
   SIGNALNOTIFY_{KEM,SPQR}_BACKEND=rust for oracle). Full 139-test suite green.
   CI split pure-only + differential jobs. Clean-env (rust blocked) verified. COMMITTED.
-- [NEXT] Step 7 docs (native_caveats/technical_reference/customizing/README) +
-  perf pass (NTT/GF hot paths) + final commit. Then DONE.
-  NOTE: per advisor, do NOT run live Note-to-Self test (link overwrites account,
-  needs approval). Behavioral equivalence to rust is sufficient proof.
-  Add caveat: pure impl is NOT constant-time (decaps re-encrypts & compares).
+- [DONE] Step 7 docs (README, native_caveats #19, technical_reference,
+  customizing) + GF hot-path optimization. COMMITTED.
+
+## STATUS: COMPLETE
+signal-notify is now 100% pure Python. Rust bindings retained as test-only
+oracles (env override SIGNALNOTIFY_{KEM,SPQR}_BACKEND=rust). Evidence:
+- ML-KEM-768 byte-exact vs pyca MLKEM768.
+- Kyber1024 + SPQR byte-compatible vs rust bindings; state handoff both ways.
+- 14,400 rounds mixed-backend chaos, all keys agree.
+- Full 139-test suite green (pure default); clean-env (rust blocked) verified.
+Did NOT run a live Note-to-Self test (per advisor: link overwrites account,
+needs approval; behavioral equivalence to the proven-live rust stack suffices).
 
 ## Key facts learned (for resume)
 - Matrix: A_hat[i][j] = SampleNTT(rho, j, i)  (column byte first).
