@@ -5,9 +5,11 @@ Signal's PQXDH uses **round-3 Kyber1024**, libsignal ``kem::KeyType`` byte
 sizes (1568 bytes) but are different algorithms with different shared secrets;
 decapsulating a Kyber ciphertext with ML-KEM silently returns a wrong secret
 (implicit rejection), surfacing only as a MAC failure downstream. The primitive
-therefore comes from :mod:`kyber1024_py`, a thin binding around the *same*
+is a **pure-Python** round-3 Kyber1024 (:mod:`.pure.kyber1024`), validated
+byte-for-byte against :mod:`kyber1024_py` — a thin binding around the *same*
 ``libcrux_ml_kem::kyber1024`` (the ``kyber`` feature) that libsignal itself uses,
-so encaps/decaps are byte-identical to the phone. Build it with ``rust/build.sh``.
+so encaps/decaps are byte-identical to the phone. No Rust toolchain is required;
+the binding is retained only as a test oracle (``SIGNALNOTIFY_KEM_BACKEND=rust``).
 
 This module is the glue that:
 

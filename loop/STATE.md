@@ -44,8 +44,11 @@ oracles (env override SIGNALNOTIFY_{KEM,SPQR}_BACKEND=rust). Evidence:
 - Kyber1024 + SPQR byte-compatible vs rust bindings; state handoff both ways.
 - 14,400 rounds mixed-backend chaos, all keys agree.
 - Full 139-test suite green (pure default); clean-env (rust blocked) verified.
-Did NOT run a live Note-to-Self test (per advisor: link overwrites account,
-needs approval; behavioral equivalence to the proven-live rust stack suffices).
+LIVE-VALIDATED 2026-07-03 against the real already-linked account (no re-link,
+no overwrite): send/receive text AND send/receive image all pass on the pure
+stack with no backend override. Incoming image: envelope decrypt (pure
+Kyber+SPQR) -> CDN download -> AES-decrypt -> digest verify -> byte-exact JPEG.
+Merged pure-python -> main 2026-07-03.
 
 ## Key facts learned (for resume)
 - Matrix: A_hat[i][j] = SampleNTT(rho, j, i)  (column byte first).
