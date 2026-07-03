@@ -25,6 +25,7 @@ compiled extensions to build.**
 ## 📖 Quick Links
 
 *   **Self-Notifications Tutorial:** [Setting Up Note-to-Self Notifications Step-by-Step](docs/tutorial_self_notifications.md)
+*   **Home Assistant:** [Push HA notifications (and camera snapshots) to Signal](docs/home_assistant.md)
 *   **Using, Extending & Customizing:** [How to drive the API and send richer content](docs/customizing.md)
 *   **Caveats & Hard-Won Lessons:** [The non-obvious traps we hit building this](docs/native_caveats.md)
 *   **Protocol Details & Architecture:** [Technical Reference & Protocol Design Docs](docs/technical_reference.md)
@@ -149,7 +150,26 @@ See [Using, Extending & Customizing](docs/customizing.md) for the full API.
 
 ---
 
-## 🤖 Config-Driven Alert Monitoring (`run`)
+## 🏠 Home Assistant
+
+Signal makes a great Home Assistant notification channel: end-to-end
+encrypted, free, no bot number, and it lands on your lock screen. The
+simplest hookup is a `shell_command`:
+
+```yaml
+shell_command:
+  signal_notify: "signal-notify send -m '{{ message }}'"
+```
+
+…called from any automation with `service: shell_command.signal_notify`.
+The **[Home Assistant guide](docs/home_assistant.md)** covers a first-class
+`notify.signal` service, sending **camera snapshots** as encrypted
+attachments, alert batching/quiet hours via `run`, and a two-way daemon that
+turns Note-to-Self replies into HA service calls.
+
+---
+
+## 🚨 Config-Driven Alert Monitoring (`run`)
 
 `signal-notify` includes a powerful diff-based alerting engine designed for cron jobs. It compares an **active** alert list against a **notified** history file, pushing only new alerts and clearing resolved ones to ensure you get notified **exactly once** per alert instance.
 
