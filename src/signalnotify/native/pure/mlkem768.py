@@ -177,7 +177,9 @@ def _sample_ntt(seed: bytes, i: int, j: int) -> list[int]:
     pos = 0
     while len(out) < N:
         if pos + 3 > len(stream):
-            stream += hashlib.shake_128(seed + bytes([i, j])).digest(len(stream) + 168)
+            # SHAKE-128 is a deterministic stream, so a longer squeeze shares the
+            # identical prefix — REPLACE (not append), keeping ``pos`` valid.
+            stream = hashlib.shake_128(seed + bytes([i, j])).digest(len(stream) + 168)
         b0, b1, b2 = stream[pos], stream[pos + 1], stream[pos + 2]
         pos += 3
         d1 = b0 | ((b1 & 0x0F) << 8)

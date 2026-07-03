@@ -63,17 +63,26 @@ def test_pure_version0_empty_states():
     assert st == b"" and msg == b"" and key is None
 
 
-rust = pytest.importorskip("spqr_py", reason="Rust spqr_py not built")
+try:
+    import spqr_py as rust
+except ImportError:  # Rust oracle not built — pure tests above still run.
+    rust = None
+
+requires_rust = pytest.mark.skipif(
+    rust is None, reason="Rust spqr_py not built (differential oracle)")
 
 
+@requires_rust
 def test_cross_pure_alice_rust_bob():
     _lockstep(PY, rust)
 
 
+@requires_rust
 def test_cross_rust_alice_pure_bob():
     _lockstep(rust, PY)
 
 
+@requires_rust
 def test_state_handoff_rust_to_pure():
     a, b = _new_pair(rust, rust)
     for _ in range(8):
@@ -93,6 +102,7 @@ def test_state_handoff_rust_to_pure():
         assert ka == kb, f"handoff B->A {step}"
 
 
+@requires_rust
 def test_state_handoff_pure_to_rust():
     a, b = _new_pair(PY, PY)
     for _ in range(8):
@@ -111,6 +121,7 @@ def test_state_handoff_pure_to_rust():
         assert ka == kb, f"rev B->A {step}"
 
 
+@requires_rust
 def test_cross_out_of_order():
     random.seed(11)
     a = rust.initial_state(AUTH, False, MJ, MO)
@@ -130,6 +141,7 @@ def test_cross_out_of_order():
         assert ka == kb
 
 
+@requires_rust
 def test_es_blob_handoff_rust_to_pure():
     """The 2080-byte encapsulation state never crosses the wire, so its
     libcrux byte layout is only exercised when a handoff lands on a state that
@@ -165,6 +177,7 @@ def test_es_blob_handoff_rust_to_pure():
         assert ka == kb, f"es-handoff B->A {step}"
 
 
+@requires_rust
 def test_cross_chaos():
     # Randomized send/drop schedule; every delivered message key must agree.
     rng = random.Random(2026)

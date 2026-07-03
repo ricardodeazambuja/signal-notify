@@ -32,9 +32,16 @@ def test_implicit_rejection_is_deterministic():
     assert r1 == r2 and len(r1) == 32
 
 
-rust = pytest.importorskip("kyber1024_py", reason="Rust kyber1024_py not built")
+try:
+    import kyber1024_py as rust
+except ImportError:  # Rust oracle not built — pure tests above still run.
+    rust = None
+
+requires_rust = pytest.mark.skipif(
+    rust is None, reason="Rust kyber1024_py not built (differential oracle)")
 
 
+@requires_rust
 def test_my_encaps_rust_decaps():
     for _ in range(8):
         pk_r, sk_r = rust.generate()
@@ -42,6 +49,7 @@ def test_my_encaps_rust_decaps():
         assert rust.decapsulate(sk_r, ct) == ss
 
 
+@requires_rust
 def test_rust_encaps_my_decaps():
     for _ in range(8):
         pk_r, sk_r = rust.generate()
@@ -49,6 +57,7 @@ def test_rust_encaps_my_decaps():
         assert k.decapsulate(sk_r, ct) == ss
 
 
+@requires_rust
 def test_cross_keygen():
     for _ in range(8):
         pk, sk = k.generate()
