@@ -9,6 +9,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI"
+        type: boolean
+        default: false
 
 jobs:
   package:
@@ -33,7 +38,23 @@ jobs:
           name: signal-notify-dist
           path: dist
 
-  # PyPI publishing is deliberately NOT wired up yet. Once a trusted
-  # publisher is registered on PyPI for 'signal-notify', add a job here
-  # (gated on the tag) with `permissions: id-token: write` that downloads
-  # the signal-notify-dist artifact and runs pypa/gh-action-pypi-publish.
+  # Publishes via PyPI Trusted Publishing (OIDC) — no token stored anywhere.
+  # The trusted publisher on PyPI is registered for this repo + wheels.yml +
+  # environment 'pypi'. Runs on version tags, or on manual dispatch only when
+  # the publish input is explicitly checked.
+  publish:
+    name: publish to PyPI
+    needs: package
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/signal-notify/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signal-notify-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
