@@ -9,7 +9,7 @@ box.
 All patterns below assume you have already **installed and linked once**:
 
 ```sh
-pip install "git+https://github.com/ricardodeazambuja/signal-notify.git"
+pip install signal-notify
 signal-notify link            # scan the QR with your phone (one time)
 signal-notify send -m "hello from Home Assistant"   # sanity check
 ```

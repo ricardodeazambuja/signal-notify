@@ -1,5 +1,6 @@
 # signal-notify
 
+[![PyPI](https://img.shields.io/pypi/v/signal-notify.svg)](https://pypi.org/project/signal-notify/)
 [![CI](https://github.com/ricardodeazambuja/signal-notify/actions/workflows/ci.yml/badge.svg)](https://github.com/ricardodeazambuja/signal-notify/actions/workflows/ci.yml)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://github.com/ricardodeazambuja/signal-notify/blob/main/pyproject.toml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
@@ -39,19 +40,25 @@ compiled extensions to build.**
 
 ## 🚀 Installation
 
-### From a local clone
+### From PyPI (recommended)
+```sh
+pip install signal-notify
+```
+
+### From GitHub (latest development version)
+```sh
+pip install "git+https://github.com/ricardodeazambuja/signal-notify.git"
+```
+
+### From a local clone (for development)
 ```sh
 git clone https://github.com/ricardodeazambuja/signal-notify.git
 cd signal-notify
 pip install -e .
 ```
 
-### Directly from GitHub (no manual clone)
-```sh
-pip install "git+https://github.com/ricardodeazambuja/signal-notify.git"
-```
-This installs the `signal-notify` package and CLI straight from the repo (pip
-clones it internally). Python dependencies: `cryptography>=38`
+Any of these installs the `signal-notify` package and CLI with everything
+included. Python dependencies: `cryptography>=38`
 (X25519/AES/HKDF), `websockets`, `qrcode`, `PyYAML`. **No external binaries, no
 Java, no Rust toolchain** — a plain `pip install` is everything you need,
 including the post-quantum crypto.
@@ -131,7 +138,7 @@ to your phone over Signal — no dedicated app, no tunnel.
 
 ### Connect your Signal app (one time)
 ```sh
-pip install -e .                              # pure Python; post-quantum crypto included
+pip install signal-notify                     # pure Python; post-quantum crypto included
 signal-notify link -n "my-agent"              # prints a QR
 ```
 On your phone: **Signal → Settings → Linked Devices → Link New Device → scan the QR.**
@@ -283,7 +290,7 @@ mid-conversation). See [caveat #19](docs/native_caveats.md) for the security
 posture (notably: the pure code is *not* constant-time).
 
 Remaining ideas: optional acceleration of the erasure-coding hot path (only
-material under heavy packet loss), and PyPI publishing.
+material under heavy packet loss).
 
 ---
 

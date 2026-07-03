@@ -19,9 +19,7 @@ No Java runtime, no compilers, and no binary downloads are required.
 Clone the repository and install the package:
 
 ```sh
-git clone https://github.com/ricardodeazambuja/signal-notify.git
-cd signal-notify
-pip install -e .
+pip install signal-notify
 ```
 
 *Note: This automatically installs all required dependencies (`cryptography`, `websockets`, `qrcode`, and `PyYAML`).*
