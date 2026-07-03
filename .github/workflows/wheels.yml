@@ -50,7 +50,11 @@ jobs:
         with:
           working-directory: rust/${{ matrix.crate }}
           target: ${{ matrix.target }}
-          manylinux: auto
+          # 2_28 (AlmaLinux 8), NOT auto: auto picks manylinux2014 (CentOS 7)
+          # for x86_64, whose yum protoc is protobuf 2.x and cannot parse the
+          # proto3 files spqr's build.rs compiles. These wheels are dev-only
+          # oracles, so the higher glibc floor is fine.
+          manylinux: 2_28
           # spqr's build.rs needs protoc (via prost-build); the manylinux
           # container doesn't ship it. manylinux images are yum-based
           # (CentOS/AlmaLinux); apt-get is a fallback for other base images.
