@@ -13,8 +13,7 @@ Ctrl-C to stop.
 """
 from __future__ import annotations
 
-from signalnotify import send_message
-from signalnotify.native.receive import listen
+from signalnotify import listen, send_message
 
 
 def handle(msg) -> None:

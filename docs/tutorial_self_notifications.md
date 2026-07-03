@@ -76,12 +76,11 @@ You should receive a push notification instantly on your phone and watch, and se
 
 For cron jobs or automated scripts, `signal-notify` includes a config-driven notification orchestrator that diffs alert states to ensure you get notified **exactly once** for a standing alert (deduplication).
 
-1. Create a configuration file named `notify.yaml` with `native: true` enabled:
+1. Create a configuration file named `notify.yaml`:
    ```yaml
    channels:
      signal:
        enabled: true
-       native: true
        note_to_self: true
 
    # Prepend emojis for readability
@@ -130,3 +129,18 @@ To run the check every 5 minutes:
    ```cron
    */5 * * * * /path/to/my_alert_script.sh && /usr/local/bin/signal-notify run --config /path/to/notify.yaml --active /path/to/active.txt --notified /path/to/notified.txt
    ```
+
+---
+
+## Next Steps: Two-Way Chat, AI Agents & Home Assistant
+
+Everything above is one-way (machine → phone), but the link you created is
+**bidirectional**: replies you type into Note-to-Self on your phone are
+readable by this device too.
+
+* **AI Agent Bridge** — let a headless agent push questions to your phone and
+  act on your replies: see the [🤖 AI Agent Bridge](../README.md#-ai-agent-bridge)
+  section and the ready-to-run [`examples/agent_chat.py`](../examples/agent_chat.py)
+  / [`examples/agent_daemon.py`](../examples/agent_daemon.py).
+* **Home Assistant** — wire HA automations (including camera snapshots) to
+  Signal: see the [Home Assistant guide](home_assistant.md).
