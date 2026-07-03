@@ -1,0 +1,68 @@
+name: Differential
+
+# Byte-compatibility guard: builds Signal's actual Rust crates (via the
+# rust/ oracle bindings) and runs the full suite so the differential tests
+# (test_pure_kyber / test_pure_spqr) verify the pure-Python crypto stays
+# byte-identical to the reference implementation — same ciphertexts, wire
+# messages and serialized ratchet state.
+#
+# Rust compilation costs real CI minutes, so this deliberately does NOT run
+# on every push: only when the files it guards change, or on manual dispatch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/signalnotify/native/pure/**"
+      - "src/signalnotify/native/kem.py"
+      - "src/signalnotify/native/ratchet.py"
+      - "rust/**"
+      - "tests/test_pure_*.py"
+      - ".github/workflows/differential.yml"
+  pull_request:
+    paths:
+      - "src/signalnotify/native/pure/**"
+      - "src/signalnotify/native/kem.py"
+      - "src/signalnotify/native/ratchet.py"
+      - "rust/**"
+      - "tests/test_pure_*.py"
+      - ".github/workflows/differential.yml"
+
+jobs:
+  differential:
+    name: differential vs Rust oracle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # spqr's build.rs compiles its .proto files via prost-build (needs protoc).
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # rust-toolchain.toml in each crate pins the compiler; rustup auto-installs
+      # the pinned version on first build.
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust/kyber1024_py
+            rust/spqr_py
+
+      - name: Create venv and install package
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e '.[test]' maturin
+
+      # --locked (inside build.sh) makes a drifted Cargo.lock a hard error,
+      # enforcing the reproducibility contract in rust/*/PROVENANCE.md.
+      - name: Build Rust oracle bindings (kyber1024_py + spqr_py, locked)
+        run: PYTHON="$PWD/.venv/bin/python" bash rust/build.sh
+
+      - name: Run tests (pure + differential oracle)
+        run: .venv/bin/python -m pytest -q
