@@ -20,10 +20,12 @@ classifiers = [
 dependencies = [
     "qrcode>=7",
     "PyYAML>=5.4",
-    # ML-KEM-1024 (PQXDH) requires the mlkem primitive, added in cryptography 44
-    # (bundled OpenSSL >= 3.5). The API is exposed as
-    # cryptography.hazmat.primitives.asymmetric.mlkem.
-    "cryptography>=44",
+    # Used only for classical primitives (X25519, HKDF, AES-CBC/CTR, PKCS7);
+    # all post-quantum crypto (ML-KEM, Kyber-1024, SPQR) is pure Python in
+    # signalnotify.native.pure. Floor is 38: the earliest release with
+    # X25519 {private,public}_bytes_raw(). Kept low on purpose so older ARM
+    # platforms (Jetson/RPi) can use an existing distro/piwheels wheel.
+    "cryptography>=38",
     "websockets>=10.0",
 ]
 

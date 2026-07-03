@@ -47,10 +47,28 @@ pip install -e .
 pip install "git+https://github.com/ricardodeazambuja/signal-notify.git"
 ```
 This installs the `signal-notify` package and CLI straight from the repo (pip
-clones it internally). Python dependencies: `cryptography>=44`
+clones it internally). Python dependencies: `cryptography>=38`
 (X25519/AES/HKDF), `websockets`, `qrcode`, `PyYAML`. **No external binaries, no
 Java, no Rust toolchain** — a plain `pip install` is everything you need,
 including the post-quantum crypto.
+
+### ARM boards (Raspberry Pi, Jetson, …)
+
+`signal-notify` itself is a pure-Python (`py3-none-any`) package; the only
+compiled dependency is `cryptography`, and PyPI ships prebuilt `cryptography`
+wheels for 64-bit ARM (`aarch64`) — so on a 64-bit Raspberry Pi OS, Jetson or
+similar, a plain `pip install` just works. Two caveats:
+
+* **32-bit ARM (`armv7l`, e.g. 32-bit Raspberry Pi OS):** PyPI has no
+  `cryptography` wheel, so pip would try to build it from source (needing a
+  Rust toolchain + OpenSSL headers). Use a prebuilt wheel instead: on
+  Raspberry Pi OS, [piwheels](https://www.piwheels.org/project/cryptography/)
+  is preconfigured and provides one (`pip install cryptography` picks it up
+  automatically), or install the distro package (`apt install
+  python3-cryptography`, version ≥ 38).
+* **Older aarch64 images** (old JetPack / Debian): if the newest `cryptography`
+  wheel doesn't match your glibc/Python, pin an older one that still ships a
+  wheel for your platform — anything `>=38` works with signal-notify.
 
 > **Post-quantum crypto is pure Python.** Kyber-1024 and SPQR are implemented in
 > `signalnotify/native/pure/` and validated byte-for-byte against Signal's own

@@ -13,8 +13,8 @@ than plain Note-to-Self text. For the *why-it-works-this-way* traps, read
 ```sh
 pip install -e .
 ```
-Runtime deps: `cryptography>=44` (X25519 / AES / HKDF), `websockets`, `qrcode`,
-`PyYAML`.
+Runtime deps: `cryptography>=38` (X25519 / AES / HKDF — the post-quantum
+primitives are pure Python, see below), `websockets`, `qrcode`, `PyYAML`.
 
 ### Post-quantum crypto (pure Python, built in)
 The post-quantum primitives Signal mandates on a modern account are implemented
