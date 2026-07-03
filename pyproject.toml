@@ -12,8 +12,15 @@ license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Ricardo de Azambuja" }]
 keywords = ["signal", "notifications", "note-to-self", "alerts", "ai-agent"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: POSIX",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Communications :: Chat",
     "Topic :: System :: Monitoring",
 ]
@@ -28,6 +35,12 @@ dependencies = [
     "cryptography>=38",
     "websockets>=10.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ricardodeazambuja/signal-notify"
+Repository = "https://github.com/ricardodeazambuja/signal-notify"
+Issues = "https://github.com/ricardodeazambuja/signal-notify/issues"
+Changelog = "https://github.com/ricardodeazambuja/signal-notify/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

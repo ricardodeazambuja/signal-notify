@@ -1,9 +1,12 @@
 name: Wheels
 
-# Prebuilt abi3 wheels for the two post-quantum Rust bindings, so users don't
-# need a Rust toolchain. One wheel per platform covers CPython >= 3.9
-# (abi3-py39). --locked keeps the reproducibility contract from
-# rust/*/PROVENANCE.md: a drifted Cargo.lock fails the build.
+# 1) The signal-notify package itself: a pure-Python sdist + py3-none-any
+#    wheel (works on every platform, x86/aarch64/armv7 alike).
+# 2) Prebuilt abi3 wheels for the two post-quantum Rust bindings, so devs
+#    running the differential tests don't need a Rust toolchain. One wheel
+#    per platform covers CPython >= 3.9 (abi3-py39). --locked keeps the
+#    reproducibility contract from rust/*/PROVENANCE.md: a drifted
+#    Cargo.lock fails the build.
 
 on:
   push:
@@ -11,6 +14,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  package:
+    name: signal-notify sdist + py3-none-any wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build sdist + wheel
+        run: |
+          pip install build
+          python -m build
+      - name: Smoke-test the wheel
+        run: |
+          pip install dist/*.whl
+          signal-notify --version
+          python -c "from signalnotify import send_message, receive, listen"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signal-notify-dist
+          path: dist
+
   linux:
     name: ${{ matrix.crate }} linux-${{ matrix.target }}
     runs-on: ubuntu-latest

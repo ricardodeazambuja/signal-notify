@@ -1,5 +1,9 @@
 # signal-notify
 
+[![CI](https://github.com/ricardodeazambuja/signal-notify/actions/workflows/ci.yml/badge.svg)](https://github.com/ricardodeazambuja/signal-notify/actions/workflows/ci.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://github.com/ricardodeazambuja/signal-notify/blob/main/pyproject.toml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
 Notify **yourself** via [Signal](https://signal.org) with full push notifications (lock screen + Apple Watch). Messages land in your own **Note-to-Self** chat. No second phone number, no bot account, no third-party push service required.
 
 **A phone bridge for headless AI agents.** signal-notify turns the Signal app you

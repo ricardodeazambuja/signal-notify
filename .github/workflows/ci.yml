@@ -10,12 +10,18 @@ jobs:
   # green with nothing but pip — no Rust toolchain, no protoc, no cargo. The
   # Rust-oracle differential tests skip themselves cleanly here.
   test:
-    name: pytest pure (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: pytest pure (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.9", "3.13"]
+        include:
+          # aarch64 smoke test: proves the pip-only install works on the
+          # ARM boards we target (Jetson / 64-bit Raspberry Pi class).
+          - os: ubuntu-24.04-arm
+            python-version: "3.13"
     steps:
       - uses: actions/checkout@v4
 
