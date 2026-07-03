@@ -60,19 +60,24 @@ including the post-quantum crypto.
 
 `signal-notify` itself is a pure-Python (`py3-none-any`) package; the only
 compiled dependency is `cryptography`, and PyPI ships prebuilt `cryptography`
-wheels for 64-bit ARM (`aarch64`) — so on a 64-bit Raspberry Pi OS, Jetson or
-similar, a plain `pip install` just works. Two caveats:
+wheels for both ARM flavours:
 
-* **32-bit ARM (`armv7l`, e.g. 32-bit Raspberry Pi OS):** PyPI has no
-  `cryptography` wheel, so pip would try to build it from source (needing a
-  Rust toolchain + OpenSSL headers). Use a prebuilt wheel instead: on
-  Raspberry Pi OS, [piwheels](https://www.piwheels.org/project/cryptography/)
-  is preconfigured and provides one (`pip install cryptography` picks it up
-  automatically), or install the distro package (`apt install
-  python3-cryptography`, version ≥ 38).
-* **Older aarch64 images** (old JetPack / Debian): if the newest `cryptography`
-  wheel doesn't match your glibc/Python, pin an older one that still ships a
-  wheel for your platform — anything `>=38` works with signal-notify.
+* **64-bit ARM (`aarch64`):** wheels go back to `manylinux2014` (glibc ≥ 2.17),
+  so a plain `pip install` just works on 64-bit Raspberry Pi OS, Jetson
+  (JetPack with Python ≥ 3.9), and essentially any aarch64 Linux — nothing is
+  compiled locally.
+* **32-bit ARM (`armv7l`, e.g. 32-bit Raspberry Pi OS):** recent `cryptography`
+  releases ship `manylinux_2_31_armv7l` wheels, covering Raspberry Pi OS
+  Bullseye (2021) and newer with CPython ≥ 3.9. On older 32-bit images
+  (glibc < 2.31), pip would fall back to a source build (Rust toolchain +
+  OpenSSL headers) — avoid that by using
+  [piwheels](https://www.piwheels.org/project/cryptography/) (preconfigured on
+  Raspberry Pi OS) or the distro package (`apt install python3-cryptography`,
+  version ≥ 38).
+
+The other dependencies never need a compiler: `qrcode` and `websockets` ship
+pure-Python wheels (websockets' C speedups are optional), and `PyYAML` is on
+piwheels/apt for 32-bit ARM.
 
 > **Post-quantum crypto is pure Python.** Kyber-1024 and SPQR are implemented in
 > `signalnotify/native/pure/` and validated byte-for-byte against Signal's own
