@@ -76,7 +76,7 @@ similar, a plain `pip install` just works. Two caveats:
 
 > **Post-quantum crypto is pure Python.** Kyber-1024 and SPQR are implemented in
 > `signalnotify/native/pure/` and validated byte-for-byte against Signal's own
-> Rust libraries (see [caveat #18](docs/native_caveats.md)). The Rust bindings
+> Rust libraries (see [caveat #19](docs/native_caveats.md)). The Rust bindings
 > under `rust/` are kept only as differential-test oracles; you never need to
 > build them to use `signal-notify`. To run the cross-implementation tests
 > against them, build with `PYTHON=$(which python) rust/build.sh` (needs a Rust
@@ -274,7 +274,7 @@ toolchain, no `maturin`, no platform-specific wheels. The pure implementation
 is the default; the Rust bindings under `rust/` are retained only as
 differential-test oracles (keys, ciphertexts, wire messages and serialized
 state are byte-compatible, so a live session can even move between the two
-mid-conversation). See [caveat #18](docs/native_caveats.md) for the security
+mid-conversation). See [caveat #19](docs/native_caveats.md) for the security
 posture (notably: the pure code is *not* constant-time).
 
 Remaining ideas: optional acceleration of the erasure-coding hot path (only
