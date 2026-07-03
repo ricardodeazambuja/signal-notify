@@ -69,20 +69,19 @@ SPQR_MAX_OOO_KEYS = 2000
 
 
 def _spqr():
-    """Lazily import the compiled SPQR binding, with a build hint on failure.
+    """Return the SPQR backend.
 
-    Kept lazy so classic-X3DH code paths (and their tests) don't require the
-    Rust module to be built.
+    Defaults to the pure-Python implementation (:mod:`.pure.spqr`), so no Rust
+    toolchain is required to decrypt messages from modern linked devices. Set
+    ``SIGNALNOTIFY_SPQR_BACKEND=rust`` to use the ``spqr_py`` binding instead
+    (kept as a differential-test oracle); protobuf state and wire messages are
+    byte-compatible, so a session can move between the two mid-conversation.
     """
-    try:
+    if os.environ.get("SIGNALNOTIFY_SPQR_BACKEND") == "rust":
         import spqr_py
-    except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise RuntimeError(
-            "spqr_py native module not available. Build it with rust/build.sh — "
-            "it is required to decrypt messages from modern linked devices, which "
-            "mandate the SPQR capability."
-        ) from exc
-    return spqr_py
+        return spqr_py
+    from .pure import spqr
+    return spqr
 
 
 # ---- small key helpers -----------------------------------------------------

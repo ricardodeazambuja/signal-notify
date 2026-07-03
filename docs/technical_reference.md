@@ -1,12 +1,12 @@
 # Technical Reference & Protocol Design
 
-This document describes the native Python engine of `signal-notify`. It operates without binary wrappers (like `libsignal-client` Rust bindings) or JVM processes.
+This document describes the native Python engine of `signal-notify`. It operates without binary wrappers (like `libsignal-client` Rust bindings) or JVM processes — the entire protocol, including the post-quantum primitives, is pure Python.
 
 ---
 
 ## 1. Native Client Engine Architecture
 
-`signal-notify` uses a standard Python stack: `cryptography` (asymmetric X25519 and symmetric AES/HMAC) and `websockets` (transport). The two post-quantum primitives Signal mandates are provided by in-process pyo3 bindings built from Signal's own libraries — `rust/kyber1024_py` (round-3 Kyber-1024 KEM) and `rust/spqr_py` (SPQR ratchet). No JVM, no subprocess.
+`signal-notify` uses a standard Python stack: `cryptography` (asymmetric X25519 and symmetric AES/HMAC) and `websockets` (transport). The two post-quantum primitives Signal mandates are implemented in pure Python under `native/pure/` — `mlkem768.py`/`kyber1024.py` (ML-KEM-768 and round-3 Kyber-1024 KEMs) and `spqr.py` (SPQR ratchet, with `_pb.py` and `spqr_gf.py` helpers) — validated byte-for-byte against Signal's own Rust libraries (kept under `rust/` as test-only oracles; see [Caveats #19](native_caveats.md)). No Rust toolchain, no JVM, no subprocess.
 
 ```mermaid
 graph TD
@@ -20,8 +20,8 @@ graph TD
         C["registration.py<br>(HTTP REST + Signal CA)"]
         D["provisioning.py<br>(WebSockets & Cipher)"]
         E["crypto.py<br>(X25519, XEd25519, AES)"]
-        K["kem.py + rust/kyber1024_py<br>(round-3 Kyber-1024 KEM)"]
-        S["rust/spqr_py<br>(SPQR post-quantum ratchet)"]
+        K["kem.py + native/pure/kyber1024.py<br>(round-3 Kyber-1024 KEM)"]
+        S["native/pure/spqr.py<br>(SPQR post-quantum ratchet)"]
         I["messaging.py<br>(send: X3DH + Protobuf)"]
         R["ratchet.py<br>(Double Ratchet + X3DH/PQXDH)"]
         J["receive.py<br>(WebSocket receive/ACK)"]
@@ -250,7 +250,7 @@ Receiving is fully native (`ratchet.py` + `receive.py`).
 * **Modules:** `signalnotify.native.receive` (public: `receive`, `receive_note_to_self`, `listen`, `Message`) and `signalnotify.native.ratchet` (the crypto core, re-exported for API compatibility as `signalnotify.receive`/`signalnotify.Message`).
 * **Transport:** an authenticated WebSocket to `wss://chat.signal.org/v1/websocket/`. It authenticates with an HTTP **`Authorization: Basic base64("{aci}.{deviceId}:{password}")` header on the handshake** — the `?login=…&password=…` query form is silently ignored and delivers nothing (see [Caveats #5](native_caveats.md)). Each queued message arrives as a `WebSocketMessage(REQUEST)` with `verb=PUT path=/api/v1/message body=<Envelope>`; the loop decodes it, decrypts, and **ACKs** with a `WebSocketResponseMessage` status `200` (the server acks-and-deletes, so an un-acked message stays queued). Keepalive requests are answered; the `/api/v1/queue/empty` marker ends a one-shot drain.
 * **Decrypt:** dispatch on `Envelope.type`:
-  * **PREKEY (3):** responder X3DH/**PQXDH** (`accept_prekey`) establishes a new session, decapsulating the **round-3 Kyber-1024** ciphertext (via `rust/kyber1024_py`; *not* ML-KEM — see [Caveats #1](native_caveats.md)) and initialising the **SPQR** ratchet, then decrypts the embedded `SignalMessage`.
+  * **PREKEY (3):** responder X3DH/**PQXDH** (`accept_prekey`) establishes a new session, decapsulating the **round-3 Kyber-1024** ciphertext (via `native/pure/kyber1024.py`; *not* ML-KEM — see [Caveats #1](native_caveats.md)) and initialising the **SPQR** ratchet, then decrypts the embedded `SignalMessage`.
   * **whisper (1):** continue an existing Double Ratchet session (DH-ratchet on a new peer ratchet key; skipped-message-key store for out-of-order delivery).
   * **receipt (5) / plaintext (8):** no ciphertext.
   * **sealed-sender (6):** `NotImplementedError` — a documented gap (the phone's own Note-to-Self sync transcripts are sender-authenticated, not sealed).

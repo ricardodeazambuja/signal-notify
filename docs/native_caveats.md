@@ -31,8 +31,11 @@ secret (KEM implicit rejection). That wrong secret poisons the PQXDH root key, s
 every derived message key is wrong and the MAC fails. There is no loud failure to
 point you at the KEM.
 
-**Fix:** `rust/kyber1024_py` binds the exact `libcrux-ml-kem 0.0.8` `kyber1024`
-that libsignal ships. The private key is the **full 3168-byte decapsulation
+**Fix:** `signalnotify/native/pure/kyber1024.py` implements round-3 Kyber-1024
+in pure Python (the default), validated byte-for-byte against the Rust
+`kyber1024_py` binding of the exact `libcrux-ml-kem 0.0.8` `kyber1024` libsignal
+ships (see [caveat #19](#19-pure-python-post-quantum-crypto--byte-compatible-but-not-constant-time)).
+The private key is the **full 3168-byte decapsulation
 key**, not a 64-byte seed. On the wire Signal prefixes the Kyber public key and
 ciphertext with `0x08` → 1569 bytes.
 
@@ -96,8 +99,11 @@ devices and encrypts Note-to-Self sync transcripts with the **Sparse
 Post-Quantum Ratchet** (SPQR / "triple ratchet") layered on top of PQXDH +
 Double Ratchet. Without it the message keys are wrong.
 
-**Fix:** `rust/spqr_py` binds Signal's `spqr` crate (pinned to the commit
-libsignal ships). Wiring: the **3rd PQXDH output** is the SPQR `auth_key`;
+**Fix:** `signalnotify/native/pure/spqr.py` implements Signal's Sparse
+Post-Quantum Ratchet in pure Python (the default), a faithful port of the `spqr`
+crate at the commit libsignal ships, validated against the Rust `spqr_py`
+binding (see [caveat #19](#19-pure-python-post-quantum-crypto--byte-compatible-but-not-constant-time)).
+Wiring: the **3rd PQXDH output** is the SPQR `auth_key`;
 `SignalMessage` **field 5** carries the SPQR message; SPQR's returned key is the
 **HKDF salt** used to derive the Double Ratchet message keys.
 
@@ -313,4 +319,44 @@ disk. But:
   account or any envelope off-machine.
 - **Committed tests must use synthetic fixtures only** (reserved
   `+1555-01xx` numbers, all-zero UUIDs, as the existing tests do) — never a
-  real account. See [Using, Extending & Customizing §6](customizing.md#6-testing-without-a-live-account). 
+  real account. See [Using, Extending & Customizing §6](customizing.md#6-testing-without-a-live-account).
+
+---
+
+## 19. Pure-Python post-quantum crypto — byte-compatible, but NOT constant-time
+
+The two post-quantum primitives (round-3 **Kyber-1024** for PQXDH and **SPQR**
+for the post-quantum ratchet) are implemented in pure Python under
+`signalnotify/native/pure/` (`mlkem768.py`, `kyber1024.py`, `spqr.py`, plus the
+`_pb.py` proto codec and `spqr_gf.py` GF(2^16) erasure coder). They are the
+**default** backend; the Rust bindings under `rust/` are retained only as
+differential-test oracles and are selected with
+`SIGNALNOTIFY_KEM_BACKEND=rust` / `SIGNALNOTIFY_SPQR_BACKEND=rust`.
+
+**Correctness is validated, not assumed.** ML-KEM-768 (SPQR's incremental KEM)
+is checked byte-for-byte against `cryptography`'s `MLKEM768`; Kyber-1024 and
+SPQR are cross-checked against the Rust bindings — lockstep both directions,
+serialized-**state handoff** both directions (proving the protobuf state is
+byte-compatible, so an existing Rust-serialized `pqr_state` on disk keeps
+working), out-of-order delivery, the 2080-byte encapsulation-state (`es`) blob
+that never crosses the wire, and a 400-round randomized chaos schedule. See
+`tests/test_pure_{mlkem,kyber,spqr}.py`.
+
+**Security posture — read this.** Unlike the Rust libraries (which are written
+to be constant-time), the pure-Python code is **not side-channel-hardened and
+cannot be**: Python's bignum/list operations and dict lookups are inherently
+data-dependent. Concretely, `mlkem768.decaps` / `kyber1024.decapsulate`
+re-encrypt and compare ciphertexts with `==` (not a constant-time compare), and
+the NTT / GF arithmetic branches on data. This is acceptable for the threat
+model here — a personal notifier / agent bridge decrypting your *own*
+Note-to-Self traffic on your *own* machine, where a local attacker able to
+mount timing/cache attacks against this process already has far greater access.
+It is **not** suitable for a multi-tenant server decrypting other parties'
+messages, or anywhere a remote timing oracle is plausible. If you need that,
+select the Rust backend via the env vars above (and build `rust/build.sh`).
+
+Performance: in-order delivery (the normal Note-to-Self case) is fast; the
+Lagrange erasure decode/encode only does expensive interpolation under packet
+loss, a one-time ~50–150 ms per epoch. Key generation and encapsulation are a
+few ms each. See [caveat #17](#17-reproducible-rust-builds--dont-let-the-lockfile-drift)
+for the (still available) reproducible Rust oracle build.

@@ -5,9 +5,11 @@ Signal's PQXDH uses **round-3 Kyber1024**, libsignal ``kem::KeyType`` byte
 sizes (1568 bytes) but are different algorithms with different shared secrets;
 decapsulating a Kyber ciphertext with ML-KEM silently returns a wrong secret
 (implicit rejection), surfacing only as a MAC failure downstream. The primitive
-therefore comes from :mod:`kyber1024_py`, a thin binding around the *same*
+is a **pure-Python** round-3 Kyber1024 (:mod:`.pure.kyber1024`), validated
+byte-for-byte against :mod:`kyber1024_py` — a thin binding around the *same*
 ``libcrux_ml_kem::kyber1024`` (the ``kyber`` feature) that libsignal itself uses,
-so encaps/decaps are byte-identical to the phone. Build it with ``rust/build.sh``.
+so encaps/decaps are byte-identical to the phone. No Rust toolchain is required;
+the binding is retained only as a test oracle (``SIGNALNOTIFY_KEM_BACKEND=rust``).
 
 This module is the glue that:
 
@@ -23,17 +25,22 @@ has no compact seed-reconstruction like ML-KEM's ``from_seed_bytes``).
 """
 from __future__ import annotations
 
+import os
+
 
 def _kyber():
-    """Lazily import the compiled Kyber1024 binding, with a build hint."""
-    try:
+    """Return the Kyber1024 backend.
+
+    Defaults to the pure-Python implementation (:mod:`.pure.kyber1024`), so no
+    Rust toolchain is required. Set ``SIGNALNOTIFY_KEM_BACKEND=rust`` to use the
+    ``kyber1024_py`` binding instead (kept as a differential-test oracle); keys
+    and ciphertexts are byte-compatible between the two.
+    """
+    if os.environ.get("SIGNALNOTIFY_KEM_BACKEND") == "rust":
         import kyber1024_py
-    except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise RuntimeError(
-            "kyber1024_py native module not available. Build it with rust/build.sh "
-            "— it provides the round-3 Kyber1024 KEM Signal's PQXDH uses."
-        ) from exc
-    return kyber1024_py
+        return kyber1024_py
+    from .pure import kyber1024
+    return kyber1024
 
 
 # libsignal kem::KeyType id for Kyber1024. Prefixes both the serialized public

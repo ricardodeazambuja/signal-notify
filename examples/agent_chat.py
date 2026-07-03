@@ -12,8 +12,7 @@ an agent harness needs:
                              phone (or the timeout elapses); returns your text.
 
 Prereqs (one time):
-    pip install -e .
-    PYTHON=$(which python) rust/build.sh        # post-quantum bindings
+    pip install -e .                            # pure Python; no Rust/JVM needed
     signal-notify link -n "my-agent"            # scan the QR with your phone
 
 Run the interactive demo (you type here -> it appears on your phone -> you reply

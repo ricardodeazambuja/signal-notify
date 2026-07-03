@@ -11,14 +11,14 @@ or a [Tailscale](https://tailscale.com)-style tunnel just to reach your agent fr
 your phone — the transport is Signal, end-to-end encrypted, reachable from anywhere
 your phone has signal. See [🤖 AI Agent Bridge](#-ai-agent-bridge) below.
 
-**Pure Python protocol, no external Signal client, no Java.** Linking, sending *and*
-receiving all talk directly to Signal's servers over HTTPS/WebSockets. All
-protocol logic — X3DH/PQXDH, the Double Ratchet, protobuf, transport, padding,
-session management — is Python. The only compiled code is in-process wheels:
-`cryptography` (X25519/AES/HKDF) plus two small pyo3 bindings for the post-quantum
-primitives Signal mandates — **round-3 Kyber-1024** (`rust/kyber1024_py`) and the
-**Sparse Post-Quantum Ratchet / SPQR** (`rust/spqr_py`), both bound from Signal's
-own libraries. **No JVM, no subprocess.**
+**100% pure Python, no external Signal client, no Java, no Rust.** Linking,
+sending *and* receiving all talk directly to Signal's servers over
+HTTPS/WebSockets. Every piece of protocol logic — X3DH/PQXDH, the Double
+Ratchet, the post-quantum primitives Signal mandates (**round-3 Kyber-1024**
+and the **Sparse Post-Quantum Ratchet / SPQR**), protobuf, transport, padding,
+session management — is Python. The only compiled dependency is `cryptography`
+(a standard pip wheel, used for X25519/AES/HKDF). **No JVM, no subprocess, no
+compiled extensions to build.**
 
 ---
 
@@ -47,34 +47,18 @@ pip install "git+https://github.com/ricardodeazambuja/signal-notify.git"
 ```
 This installs the `signal-notify` package and CLI straight from the repo (pip
 clones it internally). Python dependencies: `cryptography>=44`
-(X25519/AES/HKDF), `websockets`, `qrcode`, `PyYAML`. No external binaries, no
-Java.
+(X25519/AES/HKDF), `websockets`, `qrcode`, `PyYAML`. **No external binaries, no
+Java, no Rust toolchain** — a plain `pip install` is everything you need,
+including the post-quantum crypto.
 
-Either way, you still need the two post-quantum Rust bindings below — they're
-separate `maturin`-built extensions, not part of the `signal-notify` package
-build, so a plain `pip install` (from a clone or from git) does not compile
-them.
-
-### Post-quantum Rust bindings (required for the crypto)
-They provide the Kyber-1024 KEM and SPQR that a modern Signal account
-requires. Needs a Rust toolchain + `maturin`, and the `rust/` directory on
-disk — if you installed via the git URL above rather than a clone, fetch just
-that directory first:
-```sh
-git clone --filter=blob:none --sparse https://github.com/ricardodeazambuja/signal-notify.git /tmp/signal-notify
-git -C /tmp/signal-notify sparse-checkout set rust
-PYTHON=$(which python) /tmp/signal-notify/rust/build.sh
-```
-(From a local clone, just run `PYTHON=$(which python) rust/build.sh` in
-place.) The build is reproducible (pinned commit + committed `Cargo.lock` +
-`rust-toolchain.toml` + `--locked`). See [`rust/*/PROVENANCE.md`](rust/) and
-[Using, Extending & Customizing](docs/customizing.md#1-setup).
-
-No Rust toolchain? The [Wheels workflow](.github/workflows/wheels.yml) builds
-prebuilt **abi3 wheels** (one per platform, CPython ≥ 3.9: Linux
-x86_64/aarch64 + macOS arm64) as CI artifacts on every tag — download and
-`pip install` them instead of building. PyPI publishing is pending a decision
-on package names.
+> **Post-quantum crypto is pure Python.** Kyber-1024 and SPQR are implemented in
+> `signalnotify/native/pure/` and validated byte-for-byte against Signal's own
+> Rust libraries (see [caveat #18](docs/native_caveats.md)). The Rust bindings
+> under `rust/` are kept only as differential-test oracles; you never need to
+> build them to use `signal-notify`. To run the cross-implementation tests
+> against them, build with `PYTHON=$(which python) rust/build.sh` (needs a Rust
+> toolchain + `maturin`) and set `SIGNALNOTIFY_SPQR_BACKEND=rust` /
+> `SIGNALNOTIFY_KEM_BACKEND=rust`.
 
 ---
 
@@ -119,8 +103,7 @@ to your phone over Signal — no dedicated app, no tunnel.
 
 ### Connect your Signal app (one time)
 ```sh
-pip install -e .
-PYTHON=$(which python) rust/build.sh          # post-quantum Rust bindings (Kyber-1024 + SPQR)
+pip install -e .                              # pure Python; post-quantum crypto included
 signal-notify link -n "my-agent"              # prints a QR
 ```
 On your phone: **Signal → Settings → Linked Devices → Link New Device → scan the QR.**
@@ -241,14 +224,19 @@ sealed-sender messages from contacts) are always preserved raw in
 ## 🗺️ Future Developments
 
 The two post-quantum primitives Signal mandates — **round-3 Kyber-1024** and
-**SPQR** — are currently in-process Rust (pyo3) bindings (`rust/kyber1024_py`,
-`rust/spqr_py`), bound directly from Signal's own libraries rather than
-reimplemented, since hand-rolling them in Python would be large and
-error-prone (see [`rust/*/PROVENANCE.md`](rust/)). The plan is to eventually
-replace both with pure-Python implementations, making `signal-notify` **100%
-pure Python** with zero compiled/native dependencies — no Rust toolchain, no
-`maturin`, no platform-specific wheels to build or download. No timeline yet;
-tracked as an open goal, not started.
+**SPQR** — were originally in-process Rust (pyo3) bindings. They are now
+**reimplemented in pure Python** under `signalnotify/native/pure/`
+(`mlkem768.py`, `kyber1024.py`, `spqr.py` and helpers), making `signal-notify`
+**100% pure Python** with zero compiled extensions to build — no Rust
+toolchain, no `maturin`, no platform-specific wheels. The pure implementation
+is the default; the Rust bindings under `rust/` are retained only as
+differential-test oracles (keys, ciphertexts, wire messages and serialized
+state are byte-compatible, so a live session can even move between the two
+mid-conversation). See [caveat #18](docs/native_caveats.md) for the security
+posture (notably: the pure code is *not* constant-time).
+
+Remaining ideas: optional acceleration of the erasure-coding hot path (only
+material under heavy packet loss), and PyPI publishing.
 
 ---
 

@@ -16,24 +16,28 @@ pip install -e .
 Runtime deps: `cryptography>=44` (X25519 / AES / HKDF), `websockets`, `qrcode`,
 `PyYAML`.
 
-### Rust post-quantum bindings (required for the crypto)
-Two in-process pyo3 extensions provide the post-quantum primitives Signal
-mandates — they are **not** optional on a modern account:
+### Post-quantum crypto (pure Python, built in)
+The post-quantum primitives Signal mandates on a modern account are implemented
+in pure Python and ship with the package — nothing to build:
 
-| crate | provides |
-|-------|----------|
-| `rust/kyber1024_py` | round-3 CRYSTALS-Kyber-1024 KEM (`generate` / `encapsulate` / `decapsulate`) |
-| `rust/spqr_py`      | Signal's Sparse Post-Quantum Ratchet (`initial_state` / `send` / `recv`) |
+| module | provides |
+|--------|----------|
+| `native/pure/kyber1024.py` | round-3 CRYSTALS-Kyber-1024 KEM (`generate` / `encapsulate` / `decapsulate`) |
+| `native/pure/mlkem768.py`  | FIPS-203 ML-KEM-768 with the incremental split SPQR needs |
+| `native/pure/spqr.py`      | Signal's Sparse Post-Quantum Ratchet (`initial_state` / `send` / `recv`) |
 
-Build and install both into the active Python env:
-```sh
-# needs a Rust toolchain (rustup) + maturin in the env
-PYTHON=$(which python) rust/build.sh
-```
-The build is reproducible (pinned commit + committed `Cargo.lock` +
-`rust-toolchain.toml` + `--locked`); see `rust/*/PROVENANCE.md`. There is **no
-Java / JRE / subprocess** anywhere — the only compiled code is these two wheels
-plus `cryptography`.
+There is **no Java / JRE / subprocess / Rust toolchain** anywhere — the only
+compiled dependency is `cryptography` (a standard pip wheel).
+
+The Rust bindings under `rust/` are kept **only as differential-test oracles**.
+You do not need them to use `signal-notify`. To run the cross-implementation
+tests against them, build with a Rust toolchain + `maturin`
+(`PYTHON=$(which python) rust/build.sh`; reproducible via pinned commit +
+committed `Cargo.lock` + `rust-toolchain.toml` + `--locked`, see
+`rust/*/PROVENANCE.md`) and select them with `SIGNALNOTIFY_KEM_BACKEND=rust` /
+`SIGNALNOTIFY_SPQR_BACKEND=rust`. See
+[Caveats #19](native_caveats.md) for the security posture (the pure code is
+byte-compatible but **not constant-time**).
 
 ### Link an account
 ```sh
@@ -174,7 +178,7 @@ field-number mistake.
 | `native/registration.py` | HTTP REST + Signal CA pinning + `SignalAPIError` (`.code`, `.response_body`) |
 | `native/provisioning.py`  | device linking (provisioning WebSocket + cipher) |
 | `native/crypto.py`        | X25519 / XEd25519 / AES / device-name encryption |
-| `native/kem.py`           | Kyber-1024 wrapper over `rust/kyber1024_py` (caveat #1) |
+| `native/kem.py`           | Kyber-1024 wrapper over `native/pure/kyber1024.py` (caveat #1) |
 | `native/ratchet.py`       | X3DH / PQXDH + Double Ratchet + SPQR; `init_sender_session`, `accept_prekey`, `ratchet_encrypt`, `ratchet_decrypt`, session (de)serialize |
 | `native/messaging.py`     | protobuf encoders, padding, `send_message_native` |
 | `native/attachments.py`   | attachment cipher + CDN upload/download + `AttachmentPointer` |

@@ -6,8 +6,11 @@ on:
   pull_request:
 
 jobs:
+  # Primary job: the package is 100% pure Python. A clean checkout must test
+  # green with nothing but pip — no Rust toolchain, no protoc, no cargo. The
+  # Rust-oracle differential tests skip themselves cleanly here.
   test:
-    name: pytest (py${{ matrix.python-version }})
+    name: pytest pure (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -20,13 +23,35 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # spqr's build.rs compiles its .proto files via prost-build, which
-      # shells out to protoc; the runner image doesn't ship it.
+      - name: Install package (pure Python, no Rust)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e '.[test]'
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest -q
+
+  # Secondary job: build the Rust bindings and run the full suite so the
+  # differential tests (test_pure_kyber / test_pure_spqr) actually exercise the
+  # pure impl against its oracle. The bindings are dev-only; the shipped
+  # package never needs them.
+  differential:
+    name: differential vs Rust oracle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # spqr's build.rs compiles its .proto files via prost-build (needs protoc).
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      # rust-toolchain.toml in each crate pins the compiler; rustup (preinstalled
-      # on the runner) auto-installs the pinned version on first build.
+      # rust-toolchain.toml in each crate pins the compiler; rustup auto-installs
+      # the pinned version on first build.
       - name: Cache cargo registry + build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -42,8 +67,8 @@ jobs:
 
       # --locked (inside build.sh) makes a drifted Cargo.lock a hard error,
       # enforcing the reproducibility contract in rust/*/PROVENANCE.md.
-      - name: Build Rust bindings (kyber1024_py + spqr_py, locked)
+      - name: Build Rust oracle bindings (kyber1024_py + spqr_py, locked)
         run: PYTHON="$PWD/.venv/bin/python" bash rust/build.sh
 
-      - name: Run tests
+      - name: Run tests (pure + differential oracle)
         run: .venv/bin/python -m pytest -q
