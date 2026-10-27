@@ -188,6 +188,28 @@ def test_receive_note_to_self_filter(tmp_path, monkeypatch):
     assert [m.body for m in msgs] == ["n2s only"]
 
 
+def test_sync_message_from_stranger_is_not_note_to_self(tmp_path, monkeypatch):
+    # A stranger can wrap a SyncMessage.Sent addressed to us in a validly
+    # encrypted envelope; it must not surface as a Note-to-Self message.
+    cfg_path, bundle = _linked_account(tmp_path)
+    content = _note_to_self_prekey_content(bundle, "rm -rf ~", 333)
+    stranger = "00000000-0000-0000-0000-0000000000cc"
+    frames = [_ws_request("/api/v1/message", _envelope(receive.TYPE_PREKEY, stranger, 1, content), 1),
+              _ws_request("/api/v1/queue/empty", b"", 2)]
+    monkeypatch.setattr(receive, "_ws_connect", lambda *a, **k: FakeWS(frames))
+    assert receive.receive(config_path=cfg_path, idle_timeout=5) == []
+
+
+def test_parse_content_sync_requires_self_source():
+    dm = encode_data_message("forged", 5)
+    content = encode_content(sync_message_bytes=encode_sync_message(
+        encode_sync_message_sent(ACI, 5, dm)))
+    assert receive.parse_content(content, {ACI}, "00000000-0000-0000-0000-0000000000cc", 5) is None
+    assert receive.parse_content(content, {ACI}, None, 5) is None
+    msg = receive.parse_content(content, {ACI}, ACI, 5)
+    assert msg.note_to_self and msg.body == "forged"
+
+
 def test_receive_whisper_after_prekey_continuation(tmp_path, monkeypatch):
     cfg_path, bundle = _linked_account(tmp_path)
     # Drive an initiator session and reuse it for a follow-up whisper message.

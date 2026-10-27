@@ -219,7 +219,8 @@ def test_message_attachments_parse(tmp_path):
     sent = encode_sync_message_sent("00000000-0000-0000-0000-0000000000aa", 7, dm)
     content = encode_content(sync_message_bytes=encode_sync_message(sent))
 
-    msg = parse_content(content, {"00000000-0000-0000-0000-0000000000aa"}, None, 7)
+    me = "00000000-0000-0000-0000-0000000000aa"
+    msg = parse_content(content, {me}, me, 7)
     assert msg.note_to_self and msg.body == "with pic"
     assert len(msg.attachments) == 1
     got = msg.attachments[0]

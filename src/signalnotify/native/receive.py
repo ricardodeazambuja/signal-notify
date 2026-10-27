@@ -129,6 +129,8 @@ def parse_content(plaintext: bytes, self_ids: set, source: str | None,
     Returns ``None`` for envelopes with no user text (receipts, typing, other
     sync messages). A ``SyncMessage.Sent`` addressed to one of our own ids is
     flagged ``note_to_self`` — the reply typed in the phone's Note-to-Self chat.
+    Sync messages whose ``source`` is not one of ``self_ids`` are dropped
+    (returns ``None``): only our own devices may send them.
     """
     fields = decode_proto(_strip_push_padding(plaintext))
 
@@ -145,6 +147,13 @@ def parse_content(plaintext: bytes, self_ids: set, source: str | None,
                        attachments=_parse_attachments(dm))
 
     if P.CONTENT_SYNC_MESSAGE in fields:
+        # Sync messages are only legitimate from our OWN devices. Any Signal
+        # user can put a SyncMessage in a Content they send us; trusting it
+        # would let a stranger forge a note_to_self message (which the agent
+        # bridge treats as the owner's command). Drop it, as Signal clients do.
+        if source not in self_ids:
+            log.warning("dropping sync message from non-self source %r", source)
+            return None
         sync = decode_proto(fields[P.CONTENT_SYNC_MESSAGE][0])
         if P.SYNC_SENT in sync:
             sent = decode_proto(sync[P.SYNC_SENT][0])
