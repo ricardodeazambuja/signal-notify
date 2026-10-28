@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 — 2026-10-27
+
+Security fix — upgrade recommended, especially for agent-bridge users.
+
+- **Receive: sync messages are only trusted from our own account.** Any
+  Signal user could previously send a `SyncMessage.Sent` addressed to us and
+  have it surface as a `note_to_self` message, which the agent-bridge
+  examples (`agent_chat.py`, `agent_daemon.py`) treat as the owner's
+  command. Such messages are now dropped unless they come from one of our
+  own ids.
+
 ## 0.1.0 — 2026-07-03
 
 First tagged release.
