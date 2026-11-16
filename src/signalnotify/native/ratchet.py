@@ -68,6 +68,22 @@ SPQR_MAX_JUMP = 25000
 SPQR_MAX_OOO_KEYS = 2000
 
 
+class RatchetError(ValueError):
+    """Recoverable ratchet failure — the envelope is quarantined, not fatal."""
+
+
+class DuplicateMessage(RatchetError):
+    """A message was already processed (libsignal ``DuplicatedMessage``).
+
+    The receive loop drops it (acks without quarantine): the key was consumed on
+    the first delivery, so a replay can never be decrypted again.
+    """
+
+
+class PqRatchetError(RatchetError):
+    """The SPQR post-quantum ratchet could not process the message."""
+
+
 def _spqr():
     """Return the SPQR backend.
 
@@ -245,17 +261,27 @@ def _spqr_init_state(pqr_key: bytes, b2a: bool, self_session: bool) -> bytes:
     return _spqr().initial_state(pqr_key, b2a, max_jump, SPQR_MAX_OOO_KEYS)
 
 
-def _spqr_recv_salt(session: Session, pq_ratchet: bytes) -> bytes | None:
-    """Advance the SPQR receive ratchet with the message's field-5 bytes.
+def _spqr_recv_salt(session: Session, pq_ratchet: bytes) -> tuple[bytes | None, bytes | None]:
+    """Compute the SPQR advance for this message WITHOUT committing it.
 
-    Returns the HKDF salt for this message's key derivation (``None`` if the
-    session has no SPQR state — a classic session).
+    Returns ``(new_state, salt)`` where ``salt`` is the HKDF salt for this
+    message's key derivation (``None`` for a classic session). The caller must
+    commit ``new_state`` only *after* the message authenticates: the SPQR ratchet
+    yields exactly one key per message, so committing before a MAC/tag check
+    would let a replayed or forged message consume a key (and a redelivery would
+    raise ``KeyAlreadyRequested``, poisoning the receive loop).
+
+    Backend failures (the pure ``SpqrError`` or the Rust oracle's
+    ``ValueError``) are normalised to :class:`PqRatchetError` — a ``ValueError``
+    the receive loop quarantines rather than a fatal error.
     """
     if not session.pqr_state:
-        return None
-    state, key = _spqr().recv(session.pqr_state, pq_ratchet or b"")
-    session.pqr_state = state
-    return key
+        return session.pqr_state, None
+    try:
+        state, key = _spqr().recv(session.pqr_state, pq_ratchet or b"")
+    except Exception as e:  # pure SpqrError / Rust ValueError / any backend error
+        raise PqRatchetError(f"SPQR receive failed: {e}") from e
+    return state, key
 
 
 def _dh_ratchet(session: Session, their_ratchet_pub: bytes) -> None:
@@ -335,18 +361,31 @@ def ratchet_decrypt(session: Session, serialized_msg: bytes,
     pq_ratchet = fields.get(P.SM_PQ_RATCHET, [b""])[0]
     their_ratchet_raw = _unprefix(their_ratchet)
 
-    # SPQR: advance the post-quantum ratchet with this message's field-5 bytes to
-    # get the HKDF salt for its message key. libsignal calls pq_ratchet_recv once
-    # per message (session_cipher_legacy.rs), independent of the DH chain step.
-    salt = _spqr_recv_salt(session, pq_ratchet)
+    # Duplicate detection (libsignal ``DuplicatedMessage``): a message on the
+    # CURRENT chain whose counter is already behind ``nr`` and is not held in the
+    # skipped store has been processed before. Reject it *before* touching SPQR —
+    # the SPQR ratchet is one-key-per-message and a second request for the same
+    # key raises ``KeyAlreadyRequested``, which used to poison the receive loop
+    # on an at-least-once redelivery (or a Note-to-Self transcript delivered
+    # twice).
+    skip_key = (their_ratchet_raw, counter)
+    if (session.dhr == their_ratchet_raw and counter < session.nr
+            and skip_key not in session.skipped):
+        raise DuplicateMessage(
+            f"duplicate message (ratchet counter {counter} < {session.nr})")
+
+    # SPQR: compute the post-quantum ratchet advance on a copy; commit it only
+    # after the message authenticates (libsignal commits pqr_state on success).
+    pqr_state, salt = _spqr_recv_salt(session, pq_ratchet)
 
     # Out-of-order message whose key we already stored?
-    skip_key = (their_ratchet_raw, counter)
     if skip_key in session.skipped:
         mk = session.skipped.pop(skip_key)
-        return _decrypt_with_message_key(mk, session.their_identity,
-                                         session.our_identity, serialized_msg,
-                                         salt=salt)
+        plaintext = _decrypt_with_message_key(mk, session.their_identity,
+                                              session.our_identity, serialized_msg,
+                                              salt=salt)
+        session.pqr_state = pqr_state
+        return plaintext
 
     # New ratchet key → DH-ratchet step (skipping the tail of the old chain).
     if session.dhr != their_ratchet_raw:
@@ -358,9 +397,11 @@ def ratchet_decrypt(session: Session, serialized_msg: bytes,
     _skip_message_keys(session, counter)
     mk, session.ckr = chain_step(session.ckr)
     session.nr += 1
-    return _decrypt_with_message_key(mk, session.their_identity,
-                                     session.our_identity, serialized_msg,
-                                     salt=salt)
+    plaintext = _decrypt_with_message_key(mk, session.their_identity,
+                                          session.our_identity, serialized_msg,
+                                          salt=salt)
+    session.pqr_state = pqr_state
+    return plaintext
 
 
 def accept_prekey(account_keys: dict, prekey_content: bytes) -> tuple[Session, bytes]:

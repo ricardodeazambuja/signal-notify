@@ -121,6 +121,29 @@ def test_out_of_order_uses_skipped_keys():
     assert ratchet.ratchet_decrypt(bob, msgs[1]) == b"m2"
 
 
+def test_redelivered_whisper_is_duplicate_not_spqr_error():
+    # At-least-once redelivery: the second delivery of a whisper must be a
+    # benign DuplicateMessage, NOT a SPQR KeyAlreadyRequested, and must not
+    # consume the one-use post-quantum key.
+    account_keys, bundle = _bob_bundle()
+    alice, content, _ = _alice_prekey_content(bundle, b"m0",
+                                              ratchet.CIPHERTEXT_VERSION_V4)
+    bob, _ = ratchet.accept_prekey(account_keys, content)
+    msg = ratchet.ratchet_encrypt(alice, b"once", version=ratchet.CIPHERTEXT_VERSION_V4)
+    assert ratchet.ratchet_decrypt(bob, msg) == b"once"
+    pqr_before = bob.pqr_state
+    with pytest.raises(ratchet.DuplicateMessage):
+        ratchet.ratchet_decrypt(bob, msg)
+    assert bob.pqr_state == pqr_before  # SPQR key not consumed on the replay
+
+
+def test_spqr_error_is_recoverable_valueerror():
+    # A backend SPQR failure must surface as a ValueError (quarantinable), not a
+    # fatal error that wedges the receive loop.
+    assert issubclass(ratchet.PqRatchetError, ValueError)
+    assert issubclass(ratchet.DuplicateMessage, ValueError)
+
+
 def test_bad_mac_rejected():
     account_keys, bundle = _bob_bundle()
     _, content, _ = _alice_prekey_content(bundle, b"tamper me",

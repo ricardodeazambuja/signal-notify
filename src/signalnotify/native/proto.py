@@ -44,9 +44,31 @@ DATA_ATTACHMENTS = 2
 DATA_EXPIRE_TIMER = 5
 DATA_PROFILE_KEY = 6
 DATA_TIMESTAMP = 7
+DATA_CONTACT = 9
 DATA_REQUIRED_PROTOCOL_VERSION = 12
 DATA_GROUP_V2 = 15
+DATA_REACTION = 16
 DATA_EXPIRE_TIMER_VERSION = 23
+
+# ---- DataMessage.Reaction (SignalService.proto) -------------------------------
+REACTION_EMOJI = 1
+REACTION_REMOVE = 2
+REACTION_TARGET_AUTHOR_ACI = 4
+REACTION_TARGET_SENT_TIMESTAMP = 5
+REACTION_TARGET_AUTHOR_ACI_BINARY = 6
+
+# ---- GroupContextV2 (SignalService.proto) -------------------------------------
+GROUP_V2_MASTER_KEY = 1
+GROUP_V2_REVISION = 2
+GROUP_V2_GROUP_CHANGE = 3
+
+# ---- DataMessage.Contact (SignalService.proto) --------------------------------
+# Contact { Name name = 1; reserved 2; repeated Phone number = 3; … }
+CONTACT_NAME = 1
+CONTACT_NAME_GIVEN = 1         # Contact.Name.givenName
+CONTACT_NAME_FAMILY = 2        # Contact.Name.familyName
+CONTACT_PHONE = 3              # Contact.number (repeated Phone)
+CONTACT_PHONE_VALUE = 1        # Contact.Phone.value
 
 # ---- AttachmentPointer --------------------------------------------------------
 AP_CDN_ID = 1                   # oneof attachment_identifier (fixed64)

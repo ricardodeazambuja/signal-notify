@@ -58,6 +58,78 @@ def send_message(text: str, *,
                                attachments=attachments)
 
 
+def send_reaction(emoji: str, target_author: str, target_sent_timestamp: int, *,
+                  recipient: str | None = None,
+                  remove: bool = False,
+                  account: str | None = None,
+                  raise_on_error: bool = False) -> bool:
+    """React to a message (or remove a reaction) in a conversation.
+
+    ``target_author`` is the ACI of the reacted-to message's author;
+    ``target_sent_timestamp`` is that message's timestamp. ``recipient`` is the
+    conversation to send the reaction to (``None`` = your Note-to-Self chat).
+    ``remove=True`` with an empty ``emoji`` removes a previous reaction.
+    """
+    from .native.messaging import encode_reaction
+
+    if not emoji and not remove:
+        raise ValueError("send_reaction: pass an emoji or remove=True")
+
+    config_path = find_account_config(account)
+    if not config_path:
+        if raise_on_error:
+            raise AccountNotLinkedError(
+                "no native Signal account configuration found (run: signal-notify link)")
+        log.error("no native Signal account configuration found "
+                  "(run: signal-notify link)")
+        return False
+    reaction_bytes = encode_reaction(emoji, target_author, target_sent_timestamp,
+                                     remove=remove)
+    return send_message_native(config_path, "", recipient=recipient,
+                               raise_on_error=raise_on_error,
+                               reaction_bytes=reaction_bytes)
+
+
+def send_group(text: str, *, members: list[str], master_key: bytes, revision: int,
+               group_change: bytes | None = None,
+               account: str | None = None,
+               raise_on_error: bool = False) -> bool:
+    """Send a message to a Signal group by fanning out to each member.
+
+    Signal has no group-state store here, so the caller supplies the group's
+    ``master_key`` (32 bytes), ``revision``, and the ``members`` (ACIs). The
+    message is sent to every member's devices with the ``GroupContextV2``
+    embedded; returns True only if every member send succeeded.
+
+    NOTE: this does not fetch group membership, does not add an own-device
+    "sent" sync transcript, and does not handle server-side group
+    authorization/endorsement — a larger, group-state-dependent effort. It is
+    the explicit-member seam, not a complete GroupsV2 client.
+    """
+    from .native.messaging import encode_group_context_v2
+
+    if not members:
+        raise ValueError("send_group: pass at least one member ACI")
+
+    config_path = find_account_config(account)
+    if not config_path:
+        if raise_on_error:
+            raise AccountNotLinkedError(
+                "no native Signal account configuration found (run: signal-notify link)")
+        log.error("no native Signal account configuration found "
+                  "(run: signal-notify link)")
+        return False
+    group_v2_bytes = encode_group_context_v2(master_key, revision,
+                                             group_change=group_change)
+    ok = True
+    for member in members:
+        sent = send_message_native(config_path, text, recipient=member,
+                                   raise_on_error=raise_on_error,
+                                   group_v2_bytes=group_v2_bytes)
+        ok = ok and sent
+    return ok
+
+
 def chunk(seq: list, size: int):
     """Yield successive ``size``-length slices of ``seq``."""
     for i in range(0, len(seq), size):

@@ -27,7 +27,8 @@ from .messaging import (encode_bytes_field, encode_string_field,
                         encode_varint_field)
 from .provisioning import _ws_connect
 from .ratchet import (account_keys_from_config, accept_prekey, ratchet_decrypt,
-                      session_from_json, session_to_json, Session)
+                      session_from_json, session_to_json, Session, _same_identity,
+                      DuplicateMessage)
 from .registration import DEFAULT_USER_AGENT, DEFAULT_WS_URL, decode_proto
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,9 @@ class Message:
     key material, digest, size, contentType, fileName…) — pass each to
     :func:`signalnotify.native.attachments.download_attachment` to fetch and
     decrypt it.
+
+    ``contacts`` holds any shared contact cards as ``{name, number}`` dicts
+    (``DataMessage.contact``).
     """
     timestamp: int | None
     body: str | None
@@ -57,6 +61,7 @@ class Message:
     group_id: str | None
     raw: dict = field(default_factory=dict, repr=False)
     attachments: list = field(default_factory=list)
+    contacts: list = field(default_factory=list)
 
     @property
     def is_text(self) -> bool:
@@ -122,6 +127,60 @@ def _parse_attachments(dm: dict) -> list:
     return out
 
 
+def _parse_contacts(dm: dict) -> list:
+    """Decode ``DataMessage.contact`` cards into ``[{name, number}, …]``.
+
+    ``SignalService.proto`` ``DataMessage.Contact``::
+
+        message Contact {
+          message Name  { optional string givenName = 1; optional string familyName = 2; … }
+          message Phone { optional string value = 1; … }
+          optional Name  name   = 1;
+          reserved 2;                       // no field 2
+          repeated Phone number = 3;
+        }
+
+    (Field 2 does not exist; a name is a nested ``Name`` message, not raw text,
+    and phone numbers are nested ``Phone`` messages — reading field 2 as text
+    decoded raw protobuf bytes.)
+    """
+    def _s(val):
+        return val.decode("utf-8", "replace") if isinstance(val, bytes) else (val or "")
+
+    out = []
+    for card_bytes in dm.get(P.DATA_CONTACT, []):
+        try:
+            card = decode_proto(card_bytes)
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            log.warning("skipping unparseable contact card: %s", e)
+            continue
+
+        name = ""
+        if P.CONTACT_NAME in card:
+            try:
+                name_fields = decode_proto(card[P.CONTACT_NAME][0])
+                given = _s(name_fields.get(P.CONTACT_NAME_GIVEN, [b""])[0])
+                family = _s(name_fields.get(P.CONTACT_NAME_FAMILY, [b""])[0])
+                name = " ".join(part for part in (given, family) if part).strip()
+            except (ValueError, KeyError, IndexError, TypeError) as e:
+                log.warning("skipping unparseable contact name: %s", e)
+
+        number = ""
+        for phone_bytes in card.get(P.CONTACT_PHONE, []):
+            try:
+                phone = decode_proto(phone_bytes)
+            except (ValueError, KeyError, IndexError, TypeError):
+                continue
+            value = _s(phone.get(P.CONTACT_PHONE_VALUE, [b""])[0])
+            if value:
+                number = value
+                break
+
+        if name or number:
+            out.append({"name": name, "number": number})
+    return out
+
+
 def parse_content(plaintext: bytes, self_ids: set, source: str | None,
                   envelope_ts: int | None) -> Message | None:
     """Parse a decrypted ``Content`` protobuf into a :class:`Message`.
@@ -144,7 +203,8 @@ def parse_content(plaintext: bytes, self_ids: set, source: str | None,
         return Message(timestamp=dm.get(P.DATA_TIMESTAMP, [envelope_ts])[0], body=body or None,
                        source=source, source_name=None, note_to_self=False,
                        group_id=group_id, raw={},
-                       attachments=_parse_attachments(dm))
+                       attachments=_parse_attachments(dm),
+                       contacts=_parse_contacts(dm))
 
     if P.CONTENT_SYNC_MESSAGE in fields:
         # Sync messages are only legitimate from our OWN devices. Any Signal
@@ -199,7 +259,9 @@ def _self_ids(config_data: dict) -> set:
 
 
 def _decrypt_envelope(env: dict, account_keys: dict, sessions: dict,
-                      our_aci: str | None = None) -> tuple[bytes | None, str | None, int | None]:
+                      our_aci: str | None = None, self_ids: set | None = None,
+                      device_id: int | None = None
+                      ) -> tuple[bytes | None, str | None, int | None]:
     """Decrypt one Envelope field-map. Returns ``(plaintext, source, timestamp)``.
 
     Updates ``sessions`` (the ``nativeRatchetSessions`` map) in place. Returns
@@ -235,10 +297,66 @@ def _decrypt_envelope(env: dict, account_keys: dict, sessions: dict,
         return plaintext, source, ts
 
     if etype == TYPE_SEALED:
-        # Sealed-sender (unidentified) delivery. Unwrapping needs the
-        # sealed-sender protocol; not required for the phone's own Note-to-Self
-        # sync transcripts, which are sender-authenticated. Left as a gap.
-        raise NotImplementedError("sealed-sender (type 6) unwrap not implemented")
+        # Sealed-sender (unidentified) delivery. Unwrap Sealed Sender v1/v2 — see
+        # signalnotify/native/sealed_sender.py. An invalid sender certificate,
+        # a bad MAC/tag, or an unsupported version raises (→ NotImplementedError,
+        # which the caller quarantines and can replay if support is added).
+        from .sealed_sender import SealedSenderError, unwrap
+
+        try:
+            res = unwrap(account_keys, content)
+        except SealedSenderError as exc:
+            raise NotImplementedError(f"sealed-sender: {exc}")
+
+        sender_uuid = res["sender_uuid"]
+        sender_dev = res["sender_device"]
+        sender_identity = res["sender_identity"]
+
+        # Reject a sealed envelope from our own account/device (libsignal
+        # SealedSenderSelfSend). Its session key would collide with the one the
+        # Note-to-Self send path uses, letting a self-send clobber it.
+        if (sender_uuid and self_ids and sender_uuid in self_ids
+                and (device_id is None or sender_dev == device_id)):
+            raise NotImplementedError("sealed-sender: self-send rejected")
+
+        # The sender is server-attested by this point (unwrap_v1 rejects an
+        # invalid certificate), so the uuid is trustworthy.
+        source = sender_uuid
+        sealed_key = f"{sender_uuid}:{sender_dev}"
+        inner = res["inner"]
+
+        try:
+            if res["msg_type"] == 1:  # PREKEY_MESSAGE
+                session, plaintext = accept_prekey(account_keys, inner)
+                if not _same_identity(session.their_identity, sender_identity):
+                    raise NotImplementedError(
+                        "sealed-sender: inner PreKey identity != certificate identity")
+                sessions[sealed_key] = session_to_json(session)
+                return plaintext, source, ts
+
+            if res["msg_type"] == 2:  # MESSAGE (whisper)
+                stored = sessions.get(sealed_key)
+                if stored is None:
+                    raise ValueError(
+                        f"sealed: no session for {sealed_key} (whisper before prekey)")
+                session = session_from_json(stored)
+                if not _same_identity(session.their_identity, sender_identity):
+                    raise NotImplementedError(
+                        "sealed-sender: session identity != certificate identity")
+                plaintext = ratchet_decrypt(session, inner)
+                sessions[sealed_key] = session_to_json(session)
+                return plaintext, source, ts
+        except (NotImplementedError, ValueError):
+            raise
+        except (KeyError, IndexError, TypeError) as e:
+            # A malformed inner message must quarantine, never poison the loop.
+            raise NotImplementedError(f"sealed-sender: malformed inner message: {e}")
+
+        # SENDERKEY_MESSAGE (7) / PLAINTEXT_CONTENT (8) and anything else: we
+        # cannot decrypt these, so keep raising so the envelope is QUARANTINED
+        # (and replayable) rather than acked and deleted forever.
+        raise NotImplementedError(
+            f"sealed-sender: unsupported inner message type {res['msg_type']}")
 
     # Receipts / plaintext-content envelopes carry no ciphertext to decrypt.
     return None, source, ts
@@ -415,13 +533,18 @@ async def _receive_async(config_path, timeout, max_messages, ws_url,
                     account_keys = account_keys_from_config(config_data)
                     sessions = config_data.setdefault("nativeRatchetSessions", {})
                     plaintext, source, ts = _decrypt_envelope(env, account_keys,
-                                                              sessions, aci)
+                                                              sessions, aci,
+                                                              self_ids, device_id)
                 if plaintext is not None:
                     msg = parse_content(plaintext, self_ids, source, ts)
                     if msg is not None:
                         msg.raw = {"type": env.get(P.ENVELOPE_TYPE, [None])[0],
                                    "source": source}
                         messages.append(msg)
+            except DuplicateMessage as e:
+                # Already processed on an earlier delivery: ack and drop (the
+                # one-use key is gone, so it can never be decrypted again).
+                log.info("dropping already-processed envelope: %s", e)
             except (NotImplementedError, ValueError) as e:
                 # Quarantine BEFORE the ack: the ack deletes the message from
                 # the server forever (sealed-sender envelopes land here).
