@@ -27,7 +27,8 @@ from .messaging import (encode_bytes_field, encode_string_field,
                         encode_varint_field)
 from .provisioning import _ws_connect
 from .ratchet import (account_keys_from_config, accept_prekey, ratchet_decrypt,
-                      session_from_json, session_to_json, Session, _same_identity)
+                      session_from_json, session_to_json, Session, _same_identity,
+                      DuplicateMessage)
 from .registration import DEFAULT_USER_AGENT, DEFAULT_WS_URL, decode_proto
 
 log = logging.getLogger(__name__)
@@ -540,6 +541,10 @@ async def _receive_async(config_path, timeout, max_messages, ws_url,
                         msg.raw = {"type": env.get(P.ENVELOPE_TYPE, [None])[0],
                                    "source": source}
                         messages.append(msg)
+            except DuplicateMessage as e:
+                # Already processed on an earlier delivery: ack and drop (the
+                # one-use key is gone, so it can never be decrypted again).
+                log.info("dropping already-processed envelope: %s", e)
             except (NotImplementedError, ValueError) as e:
                 # Quarantine BEFORE the ack: the ack deletes the message from
                 # the server forever (sealed-sender envelopes land here).

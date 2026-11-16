@@ -239,6 +239,45 @@ def test_receive_whisper_after_prekey_continuation(tmp_path, monkeypatch):
         assert len(msgs) == 1 and msgs[0].body == text
 
 
+def test_receive_redelivered_whisper_dropped_not_quarantined(tmp_path, monkeypatch):
+    # An at-least-once redelivery of a whisper must be acked and dropped, not
+    # quarantined (and must not raise a fatal SPQR error that wedges listen()).
+    cfg_path, bundle = _linked_account(tmp_path)
+    session, base_pub, kyber_ct = ratchet.init_sender_session(
+        our_identity_priv=bundle["id_priv"], our_identity_pub=bundle["id_pub"],
+        their_identity_pub=bundle["id_pub"],
+        their_signed_prekey_pub=bundle["signed_prekey_pub"],
+        their_one_time_prekey_pub=bundle["one_time_prekey_pub"],
+        their_kyber_pub=bundle["kyber_pub"])
+    inner0 = ratchet.ratchet_encrypt(
+        session, pad_content("first", destination_aci=ACI, timestamp_ms=1),
+        version=ratchet.CIPHERTEXT_VERSION_V4)
+    content0 = ratchet.frame_prekey_message(
+        inner_serialized=inner0, base_pub=base_pub, our_identity_pub=bundle["id_pub"],
+        registration_id=555, signed_prekey_id=bundle["signed_prekey_id"],
+        pre_key_id=bundle["one_time_prekey_id"], kyber_prekey_id=bundle["kyber_id"],
+        kyber_ciphertext=kyber_ct)
+    inner1 = ratchet.ratchet_encrypt(
+        session, pad_content("second", destination_aci=ACI, timestamp_ms=2),
+        version=ratchet.CIPHERTEXT_VERSION_V4)
+
+    frames = [_ws_request("/api/v1/message",
+                          _envelope(receive.TYPE_PREKEY, ACI, 1, content0), 1),
+              _ws_request("/api/v1/queue/empty", b"", 2)]
+    monkeypatch.setattr(receive, "_ws_connect", lambda *a, **k: FakeWS(frames))
+    assert [m.body for m in receive.receive(config_path=cfg_path, idle_timeout=5)] == ["first"]
+
+    # First whisper delivery decrypts; the redelivery is dropped (no message).
+    for expected in (["second"], []):
+        frames = [_ws_request("/api/v1/message",
+                              _envelope(receive.TYPE_WHISPER, ACI, 1, inner1), 1),
+                  _ws_request("/api/v1/queue/empty", b"", 2)]
+        monkeypatch.setattr(receive, "_ws_connect", lambda *a, **k: FakeWS(frames))
+        assert [m.body for m in receive.receive(config_path=cfg_path, idle_timeout=5)] == expected
+
+    assert not (tmp_path / (cfg_path.name + ".undecryptable.jsonl")).exists()
+
+
 def test_receipt_envelope_yields_no_message(tmp_path, monkeypatch):
     cfg_path, _ = _linked_account(tmp_path)
     frames = [_ws_request("/api/v1/message", _envelope(receive.TYPE_RECEIPT, ACI, 1, b""), 1),
