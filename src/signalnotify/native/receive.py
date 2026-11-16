@@ -48,6 +48,9 @@ class Message:
     key material, digest, size, contentType, fileName…) — pass each to
     :func:`signalnotify.native.attachments.download_attachment` to fetch and
     decrypt it.
+
+    ``contacts`` holds any shared contact cards as ``{name, number}`` dicts
+    (``DataMessage.contact``).
     """
     timestamp: int | None
     body: str | None
@@ -57,6 +60,7 @@ class Message:
     group_id: str | None
     raw: dict = field(default_factory=dict, repr=False)
     attachments: list = field(default_factory=list)
+    contacts: list = field(default_factory=list)
 
     @property
     def is_text(self) -> bool:
@@ -122,6 +126,60 @@ def _parse_attachments(dm: dict) -> list:
     return out
 
 
+def _parse_contacts(dm: dict) -> list:
+    """Decode ``DataMessage.contact`` cards into ``[{name, number}, …]``.
+
+    ``SignalService.proto`` ``DataMessage.Contact``::
+
+        message Contact {
+          message Name  { optional string givenName = 1; optional string familyName = 2; … }
+          message Phone { optional string value = 1; … }
+          optional Name  name   = 1;
+          reserved 2;                       // no field 2
+          repeated Phone number = 3;
+        }
+
+    (Field 2 does not exist; a name is a nested ``Name`` message, not raw text,
+    and phone numbers are nested ``Phone`` messages — reading field 2 as text
+    decoded raw protobuf bytes.)
+    """
+    def _s(val):
+        return val.decode("utf-8", "replace") if isinstance(val, bytes) else (val or "")
+
+    out = []
+    for card_bytes in dm.get(P.DATA_CONTACT, []):
+        try:
+            card = decode_proto(card_bytes)
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            log.warning("skipping unparseable contact card: %s", e)
+            continue
+
+        name = ""
+        if P.CONTACT_NAME in card:
+            try:
+                name_fields = decode_proto(card[P.CONTACT_NAME][0])
+                given = _s(name_fields.get(P.CONTACT_NAME_GIVEN, [b""])[0])
+                family = _s(name_fields.get(P.CONTACT_NAME_FAMILY, [b""])[0])
+                name = " ".join(part for part in (given, family) if part).strip()
+            except (ValueError, KeyError, IndexError, TypeError) as e:
+                log.warning("skipping unparseable contact name: %s", e)
+
+        number = ""
+        for phone_bytes in card.get(P.CONTACT_PHONE, []):
+            try:
+                phone = decode_proto(phone_bytes)
+            except (ValueError, KeyError, IndexError, TypeError):
+                continue
+            value = _s(phone.get(P.CONTACT_PHONE_VALUE, [b""])[0])
+            if value:
+                number = value
+                break
+
+        if name or number:
+            out.append({"name": name, "number": number})
+    return out
+
+
 def parse_content(plaintext: bytes, self_ids: set, source: str | None,
                   envelope_ts: int | None) -> Message | None:
     """Parse a decrypted ``Content`` protobuf into a :class:`Message`.
@@ -144,7 +202,8 @@ def parse_content(plaintext: bytes, self_ids: set, source: str | None,
         return Message(timestamp=dm.get(P.DATA_TIMESTAMP, [envelope_ts])[0], body=body or None,
                        source=source, source_name=None, note_to_self=False,
                        group_id=group_id, raw={},
-                       attachments=_parse_attachments(dm))
+                       attachments=_parse_attachments(dm),
+                       contacts=_parse_contacts(dm))
 
     if P.CONTENT_SYNC_MESSAGE in fields:
         # Sync messages are only legitimate from our OWN devices. Any Signal
