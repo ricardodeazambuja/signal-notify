@@ -1,14 +1,16 @@
-"""Sealed Sender v1 unwrap: round-trip + rejection of invalid envelopes.
+"""Sealed Sender v1/v2 unwrap: round-trip + rejection of invalid envelopes.
 
-We build real v1 envelopes with the same primitives libsignal's
-``sealed_sender_encrypt_from_usmc`` uses, anchored to a synthetic server
-certificate registered under a known signer id. The negative cases prove an
-invalid / expired / malformed certificate, an unknown signer id, and a bad MAC
-are rejected with :class:`SealedSenderError` — i.e. the caller quarantines them
-instead of decrypting and keying a session off an unauthenticated sender.
+We build real v1 and v2 envelopes with the same primitives libsignal's
+``sealed_sender_encrypt_from_usmc`` / ``sealed_sender_multi_recipient_encrypt``
+use, anchored to a synthetic server certificate registered under a known signer
+id. The negative cases prove an invalid / expired / malformed certificate, an
+unknown signer id, a bad MAC/tag, and a bad ephemeral key are rejected with
+:class:`SealedSenderError` — i.e. the caller quarantines them instead of
+decrypting and keying a session off an unauthenticated sender.
 """
 import hashlib
 import hmac
+import os
 import time
 import uuid
 
@@ -19,11 +21,22 @@ from signalnotify.native import sealed_sender as SS
 from signalnotify.native.crypto import generate_x25519_keypair, xed25519_sign
 from signalnotify.native.messaging import (encode_bytes_field, encode_varint,
                                            encode_varint_field)
-from signalnotify.native.ratchet import _dh, _hkdf
+from signalnotify.native.ratchet import _dh, _hkdf, _unprefix
 from signalnotify.native.sealed_sender import (SALT_PREFIX, SEALED_SENDER_V1,
-                                               SealedSenderError, unwrap_v1)
+                                               SEALED_SENDER_V2_UUID,
+                                               SEALED_SENDER_V2_SERVICE_ID,
+                                               SealedSenderError, unwrap, unwrap_v1)
 from test_native_receive import (ACI, FakeWS, _envelope, _linked_account,
                                  _ws_request)
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
+except ImportError:  # pragma: no cover - old cryptography: v1-only tests.
+    AESGCMSIV = None
+
+requires_gcmsiv = pytest.mark.skipif(
+    AESGCMSIV is None, reason="AES-GCM-SIV requires cryptography>=44")
 
 SIGNER_ID = 424242
 SENDER_UUID = "11111111-2222-3333-4444-555555555555"
@@ -146,7 +159,103 @@ def test_unwrap_v1_unknown_signer_id(server):
 def test_unwrap_v1_unsupported_version(server):
     account_keys, _, _ = _build(server)
     with pytest.raises(SealedSenderError, match="not implemented"):
-        unwrap_v1(account_keys, b"\x22garbage")
+        unwrap_v1(account_keys, b"\x33garbage")
+
+
+def test_unwrap_dispatch_unknown_version(server):
+    account_keys, _, _ = _build(server)
+    with pytest.raises(SealedSenderError, match="not implemented"):
+        unwrap(account_keys, b"\x33garbage")
+
+
+# ---- Sealed Sender v2 ------------------------------------------------------
+def _seal_v2(recipient_identity_pub, sender_identity_priv, sender_identity_pub,
+             sender_cert, msg_type, inner, version=SEALED_SENDER_V2_UUID):
+    """Build a Sealed Sender v2 received message (libsignal v2 KEM)."""
+    m = os.urandom(32)
+    r = _hkdf(m, None, SS.LABEL_V2_R, 32)
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    e_priv = X25519PrivateKey.from_private_bytes(r)
+    e_pub = e_priv.public_key().public_bytes_raw()
+    k = _hkdf(m, None, SS.LABEL_V2_K, 32)
+    our_pub = _p33(recipient_identity_pub)
+    # C: sender uses the ephemeral key as "our" key, recipient as "their" key.
+    agreement = e_priv.exchange(X25519PublicKey.from_public_bytes(_unprefix(recipient_identity_pub)))
+    c = SS._xor(_hkdf(agreement + _p33(e_pub) + our_pub, None, SS.LABEL_V2_DH, 32), m)
+    # AT: sender identity (our key) -> recipient identity (their key).
+    at = SS._compute_authentication_tag(
+        sender_identity_priv, our_pub, e_pub, c, _p33(sender_identity_pub), "sending")
+    usmc = (encode_varint_field(1, msg_type) + encode_bytes_field(2, sender_cert)
+            + encode_bytes_field(3, inner))
+    ciphertext = AESGCMSIV(k).encrypt(b"\x00" * 12, usmc, b"")
+    return bytes([version]) + c + at + e_pub + ciphertext
+
+
+def _build_v2(server, *, expires_delta=3_600_000, signer_id=SIGNER_ID,
+              signing_priv=None, msg_type=2, inner=b"\x44inner",
+              version=SEALED_SENDER_V2_UUID):
+    our_priv, our_pub = generate_x25519_keypair()
+    sender_priv, sender_pub = generate_x25519_keypair()
+    cert_bytes = _sender_certificate(
+        SENDER_UUID, 3, sender_pub, int(time.time() * 1000) + expires_delta,
+        signer_id, signing_priv or server["priv"])
+    sealed = _seal_v2(our_pub, sender_priv, sender_pub, cert_bytes, msg_type,
+                      inner, version=version)
+    account_keys = {"identity_priv": our_priv, "identity_pub": _p33(our_pub)}
+    return account_keys, sealed, sender_pub
+
+
+@requires_gcmsiv
+@pytest.mark.parametrize("version", [SEALED_SENDER_V2_UUID, SEALED_SENDER_V2_SERVICE_ID])
+def test_unwrap_v2_round_trip(server, version):
+    account_keys, sealed, sender_pub = _build_v2(
+        server, inner=b"\x44v2-inner", version=version)
+    res = unwrap(account_keys, sealed)
+    assert res["msg_type"] == 2
+    assert res["sender_uuid"] == SENDER_UUID
+    assert res["sender_device"] == 3
+    assert res["inner"] == b"\x44v2-inner"
+    assert res["sender_identity"] == _p33(sender_pub)
+
+
+@requires_gcmsiv
+def test_unwrap_v2_bad_tag(server):
+    account_keys, sealed, _ = _build_v2(server)
+    tampered = bytearray(sealed)
+    tampered[33] ^= 0x01  # first byte of the 16-byte AT
+    with pytest.raises(SealedSenderError, match="authentication tag"):
+        unwrap(account_keys, bytes(tampered))
+
+
+@requires_gcmsiv
+def test_unwrap_v2_bad_ephemeral(server):
+    account_keys, sealed, _ = _build_v2(server)
+    tampered = bytearray(sealed)
+    tampered[49] ^= 0x01  # first byte of E.pub (1 + 32 + 16)
+    with pytest.raises(SealedSenderError):
+        unwrap(account_keys, bytes(tampered))
+
+
+@requires_gcmsiv
+def test_unwrap_v2_tampered_ciphertext(server):
+    account_keys, sealed, _ = _build_v2(server)
+    tampered = sealed[:-1] + bytes([sealed[-1] ^ 0x01])
+    with pytest.raises(SealedSenderError, match="decryption failed"):
+        unwrap(account_keys, bytes(tampered))
+
+
+@requires_gcmsiv
+def test_unwrap_v2_expired_certificate(server):
+    account_keys, sealed, _ = _build_v2(server, expires_delta=-1000)
+    with pytest.raises(SealedSenderError, match="expired"):
+        unwrap(account_keys, sealed)
+
+
+@requires_gcmsiv
+def test_unwrap_v2_truncated(server):
+    account_keys, _, _ = _build_v2(server)
+    with pytest.raises(SealedSenderError, match="truncated"):
+        unwrap(account_keys, b"\x22" + b"\x00" * 10)
 
 
 # ---- receive-loop integration ---------------------------------------------
@@ -200,6 +309,26 @@ def test_receive_sealed_from_stranger(tmp_path, monkeypatch, server):
     cfg = json.loads(open(cfg_path).read())
     assert f"{SENDER_UUID}:3" in cfg["nativeRatchetSessions"]
     assert not any(k.startswith(ACI) for k in cfg["nativeRatchetSessions"])
+
+
+@requires_gcmsiv
+def test_receive_sealed_v2_from_stranger(tmp_path, monkeypatch, server):
+    cfg_path, bundle = _linked_account(tmp_path)
+    sender_priv, sender_pub = generate_x25519_keypair()
+    cert = _sender_certificate(SENDER_UUID, 3, sender_pub,
+                               int(time.time() * 1000) + 3_600_000,
+                               SIGNER_ID, server["priv"])
+    inner = _stranger_prekey_content(sender_priv, sender_pub, bundle, "v2 hello", 9)
+    sealed = _seal_v2(bundle["id_pub"], sender_priv, sender_pub, cert, 1, inner)
+    frames = [_ws_request("/api/v1/message",
+                          _envelope(receive.TYPE_SEALED, "", 1, sealed), 1),
+              _ws_request("/api/v1/queue/empty", b"", 2)]
+    monkeypatch.setattr(receive, "_ws_connect", lambda *a, **k: FakeWS(frames))
+
+    msgs = receive.receive(config_path=cfg_path, idle_timeout=5)
+    assert [m.body for m in msgs] == ["v2 hello"]
+    assert msgs[0].source == SENDER_UUID
+    assert msgs[0].note_to_self is False
 
 
 def test_receive_invalid_cert_quarantined(tmp_path, monkeypatch, server):

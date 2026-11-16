@@ -1,13 +1,14 @@
-"""Sealed-sender (Envelope type 6) unwrap — Sealed Sender **v1**.
+"""Sealed-sender (Envelope type 6) unwrap — Sealed Sender **v1 and v2**.
 
 ``signalnotify`` already implements X3DH/PQXDH, the Double Ratchet and
 Note-to-Self, but the receive path raises ``NotImplementedError`` for
 sealed-sender envelopes, so messages from *other* accounts are quarantined
 instead of delivered.
 
-This implements libsignal's [Sealed Sender v1] single-recipient KEM
-(``rust/protocol/src/sealed_sender.rs``) closely enough to unwrap a real
-production envelope:
+This implements libsignal's sealed-sender KEMs (``rust/protocol/src/
+sealed_sender.rs``) closely enough to unwrap real production envelopes:
+
+**v1** (version byte ``0x11``) — single-recipient KEM::
 
     version_byte (0x11) || UnidentifiedSenderMessage protobuf
 
@@ -26,23 +27,35 @@ production envelope:
    3 = production); the certificate signature must verify under that server
    certificate's key, and its identity key must equal the key recovered in (2).
 
+**v2** (version bytes ``0x22`` / ``0x23``) — multi-recipient KEM; the received
+format is flat::
+
+    version_byte || C(32) || AT(16) || E.pub(32) || ciphertext
+
+1. ``M = HKDF(label_DH, ECDH(ourIdentityPriv, E.pub) || E.pub || ourPub) XOR C``.
+2. Derive ``r = HKDF(label_r, M)`` and check ``X25519(r).pub == E.pub``.
+3. ``K = HKDF(label_K, M)``; ``usmc = AES-256-GCM-SIV(K, nonce=0, ct)``.
+4. ``AT' = HKDF(label_DH_s, ECDH(ourIdentityPriv, senderIdentityPub) ||
+   E.pub || C || senderPub || ourPub)``; check ``AT == AT'``. The sender
+   identity comes from the embedded ``SenderCertificate`` (there is no
+   ``encryptedStatic`` in v2).
+
 The returned ``content`` is then a normal ``version_byte || PreKeySignalMessage``
 or ``version_byte || SignalMessage`` that the existing
 :func:`~signalnotify.native.ratchet.accept_prekey` /
 :func:`~signalnotify.native.ratchet.ratchet_decrypt` paths consume.
 
-A sender certificate that does not validate — bad MAC, malformed encoding, an
-unknown signer id, an identity key that does not match the key recovered from
-``encryptedStatic``, or an expiry in the past — makes :func:`unwrap_v1` raise
+A sender certificate that does not validate — bad MAC/tag, malformed encoding,
+an unknown signer id, an identity key that does not match the key recovered from
+``encryptedStatic`` (v1), or an expiry in the past — makes :func:`unwrap` raise
 :class:`SealedSenderError`, exactly as libsignal rejects the envelope. The
 caller must quarantine (not decrypt) such an envelope. Unsupported *inner*
 message types are left to the caller, which keeps raising
 ``NotImplementedError`` so they are quarantined rather than acked and lost.
 
-Only **v1** (version byte ``0x11``) is implemented. Sealed Sender v2
-(``0x22`` / ``0x23``, the flat ``C || AT || E.pub || ciphertext`` format) is
-**not** handled yet and raises :class:`SealedSenderError` (the envelope is
-quarantined as before).
+v2 uses AES-256-GCM-SIV, available in ``cryptography`` >= 44; on older versions
+v2 envelopes raise :class:`SealedSenderError` (quarantined, replayable) while v1
+keeps working.
 """
 from __future__ import annotations
 
@@ -53,7 +66,13 @@ import time
 import uuid
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+try:  # AES-GCM-SIV (cryptography >= 44); v1 does not need it.
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV as _AESGCMSIV
+except ImportError:  # pragma: no cover - old cryptography: v1 only.
+    _AESGCMSIV = None
 
 from .crypto import encode_point, inv, p, recover_x
 from .ratchet import _dh, _hkdf, _unprefix
@@ -62,7 +81,18 @@ from .registration import decode_proto
 log = logging.getLogger(__name__)
 
 SEALED_SENDER_V1 = 0x11
+SEALED_SENDER_V2_UUID = 0x22
+SEALED_SENDER_V2_SERVICE_ID = 0x23
 SALT_PREFIX = b"UnidentifiedDelivery"
+
+# Sealed Sender v2 KDF labels (libsignal sealed_sender_v2).
+LABEL_V2_R = b"Sealed Sender v2: r (2023-08)"
+LABEL_V2_K = b"Sealed Sender v2: K"
+LABEL_V2_DH = b"Sealed Sender v2: DH"
+LABEL_V2_DH_S = b"Sealed Sender v2: DH-sender"
+V2_MESSAGE_KEY_LEN = 32
+V2_AUTH_TAG_LEN = 16
+V2_PUBLIC_KEY_LEN = 32
 
 # Signal's hardcoded server certificates (libsignal sealed_sender.rs
 # KNOWN_SERVER_CERTIFICATES). A SenderCertificate that *references* one of these
@@ -188,8 +218,13 @@ def validate_sender_certificate(cert_bytes: bytes, sender_identity: bytes,
     must not be expired. ``sender_identity`` is the key recovered from
     ``encryptedStatic``.
     """
-    cert = parse_sender_certificate(cert_bytes)
+    return _validate_parsed_certificate(
+        parse_sender_certificate(cert_bytes), sender_identity, now_ms=now_ms)
 
+
+def _validate_parsed_certificate(cert: dict, sender_identity: bytes,
+                                 now_ms: int | None = None) -> dict:
+    """Validate an already-parsed certificate (see :func:`validate_sender_certificate`)."""
     identity_key = cert["identity_key"]
     if not identity_key or _unprefix(identity_key) != _unprefix(sender_identity):
         raise SealedSenderError("certificate identity does not match sealed sender")
@@ -280,3 +315,118 @@ def unwrap_v1(account_keys: dict, content: bytes, now_ms: int | None = None) -> 
         "sender_device": cert["device"] or 1,
         "sender_identity": sender_identity,
     }
+
+
+# ---- Sealed Sender v2 ------------------------------------------------------
+def _xor(a: bytes, b: bytes) -> bytes:
+    return bytes(x ^ y for x, y in zip(a, b))
+
+
+def _apply_agreement_xor(our_priv: bytes, our_pub33: bytes, their_pub_raw: bytes,
+                         direction: str, input_key: bytes) -> bytes:
+    """libsignal ``sealed_sender_v2::apply_agreement_xor`` (HKDF-LABEL_DH XOR)."""
+    agreement = _dh(our_priv, their_pub_raw)
+    their33 = _p33(their_pub_raw)
+    if direction == "receiving":
+        ikm = agreement + their33 + our_pub33
+    else:
+        ikm = agreement + our_pub33 + their33
+    return _xor(_hkdf(ikm, None, LABEL_V2_DH, 32), input_key)
+
+
+def _compute_authentication_tag(our_priv: bytes, their_pub33: bytes,
+                                e_pub_raw: bytes, c: bytes, our_pub33: bytes,
+                                direction: str) -> bytes:
+    """libsignal ``sealed_sender_v2::compute_authentication_tag``."""
+    agreement = _dh(our_priv, their_pub33)
+    ikm = agreement + _p33(e_pub_raw) + c
+    if direction == "receiving":
+        ikm += their_pub33 + our_pub33
+    else:
+        ikm += our_pub33 + their_pub33
+    return _hkdf(ikm, None, LABEL_V2_DH_S, V2_AUTH_TAG_LEN)
+
+
+def unwrap_v2(account_keys: dict, content: bytes, now_ms: int | None = None) -> dict:
+    """Unwrap a Sealed Sender v2 envelope (``0x22`` / ``0x23``).
+
+    Returns the same shape as :func:`unwrap_v1`. Raises
+    :class:`SealedSenderError` on any failure (bad tag, ephemeral mismatch,
+    invalid/expired certificate, or an unavailable AES-GCM-SIV backend).
+    """
+    if not content:
+        raise SealedSenderError("empty content")
+    version = content[0]
+    if (version >> 4) != 2:
+        raise SealedSenderError(f"not a sealed-sender v2 message (version {version:#x})")
+    if _AESGCMSIV is None:
+        raise SealedSenderError(
+            "sealed-sender v2 requires AES-GCM-SIV (cryptography >= 44)")
+
+    body = content[1:]
+    if len(body) < V2_MESSAGE_KEY_LEN + V2_AUTH_TAG_LEN + V2_PUBLIC_KEY_LEN:
+        raise SealedSenderError("truncated sealed-sender v2 message")
+    c = body[:V2_MESSAGE_KEY_LEN]
+    at = body[V2_MESSAGE_KEY_LEN:V2_MESSAGE_KEY_LEN + V2_AUTH_TAG_LEN]
+    e_pub = body[V2_MESSAGE_KEY_LEN + V2_AUTH_TAG_LEN:
+                 V2_MESSAGE_KEY_LEN + V2_AUTH_TAG_LEN + V2_PUBLIC_KEY_LEN]
+    ciphertext = body[V2_MESSAGE_KEY_LEN + V2_AUTH_TAG_LEN + V2_PUBLIC_KEY_LEN:]
+
+    our_priv = account_keys["identity_priv"]
+    our_pub = _p33(account_keys["identity_pub"])
+
+    try:
+        m = _apply_agreement_xor(our_priv, our_pub, e_pub, "receiving", c)
+        r = _hkdf(m, None, LABEL_V2_R, 32)
+        derived_pub = X25519PrivateKey.from_private_bytes(r).public_key().public_bytes_raw()
+        if not hmac.compare_digest(derived_pub, e_pub):
+            raise SealedSenderError("derived ephemeral key does not match message")
+        k = _hkdf(m, None, LABEL_V2_K, 32)
+        usmc_raw = _AESGCMSIV(k).decrypt(b"\x00" * 12, ciphertext, b"")
+    except SealedSenderError:
+        raise
+    except Exception as e:  # bad tag / key length / curve point / etc.
+        raise SealedSenderError(f"sealed-sender v2 decryption failed: {e}")
+
+    try:
+        usmc = decode_proto(usmc_raw)
+        msg_type = usmc[1][0]
+        cert_bytes = usmc[2][0]
+        inner = usmc[3][0]
+    except (KeyError, IndexError, ValueError, TypeError) as e:
+        raise SealedSenderError(f"malformed UnidentifiedSenderMessageContent: {e}")
+
+    cert = parse_sender_certificate(cert_bytes)
+    sender_identity = cert["identity_key"]
+    if not sender_identity:
+        raise SealedSenderError("sender certificate has no identity key")
+
+    # The authentication tag binds the certificate's identity to this message
+    # (the v2 analogue of v1's encryptedStatic identity check).
+    expected_at = _compute_authentication_tag(
+        our_priv, sender_identity, e_pub, c, our_pub, "receiving")
+    if not hmac.compare_digest(at, expected_at):
+        raise SealedSenderError("authentication tag mismatch")
+
+    cert = _validate_parsed_certificate(cert, sender_identity, now_ms=now_ms)
+
+    return {
+        "inner": inner,
+        "msg_type": msg_type,
+        "sender_uuid": cert["uuid"],
+        "sender_device": cert["device"] or 1,
+        "sender_identity": sender_identity,
+    }
+
+
+def unwrap(account_keys: dict, content: bytes, now_ms: int | None = None) -> dict:
+    """Dispatch on the sealed-sender version byte (v1 ``0x11`` or v2 ``0x2X``)."""
+    if not content:
+        raise SealedSenderError("empty content")
+    version = content[0]
+    if version == SEALED_SENDER_V1:
+        return unwrap_v1(account_keys, content, now_ms=now_ms)
+    if (version >> 4) == 2:
+        return unwrap_v2(account_keys, content, now_ms=now_ms)
+    raise SealedSenderError(
+        f"sealed-sender version {version:#x} not implemented (v1/v2 only)")

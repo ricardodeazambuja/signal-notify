@@ -296,14 +296,14 @@ def _decrypt_envelope(env: dict, account_keys: dict, sessions: dict,
         return plaintext, source, ts
 
     if etype == TYPE_SEALED:
-        # Sealed-sender (unidentified) delivery. Unwrap Sealed Sender v1 — see
+        # Sealed-sender (unidentified) delivery. Unwrap Sealed Sender v1/v2 — see
         # signalnotify/native/sealed_sender.py. An invalid sender certificate,
-        # a bad MAC, or an unsupported version raises (→ NotImplementedError,
+        # a bad MAC/tag, or an unsupported version raises (→ NotImplementedError,
         # which the caller quarantines and can replay if support is added).
-        from .sealed_sender import SealedSenderError, unwrap_v1
+        from .sealed_sender import SealedSenderError, unwrap
 
         try:
-            res = unwrap_v1(account_keys, content)
+            res = unwrap(account_keys, content)
         except SealedSenderError as exc:
             raise NotImplementedError(f"sealed-sender: {exc}")
 
