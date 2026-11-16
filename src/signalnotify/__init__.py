@@ -42,12 +42,14 @@ from .native.receive import (
     receive_note_to_self,
 )
 from .policy import in_quiet_hours, matches_any
-from .sender import chunk, send, send_message, with_prefix
+from .sender import chunk, send, send_group, send_message, send_reaction, with_prefix
 
 __all__ = [
     "__version__",
     "send_message",
     "send",
+    "send_reaction",
+    "send_group",
     "with_prefix",
     "chunk",
     "in_quiet_hours",

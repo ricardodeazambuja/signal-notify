@@ -262,8 +262,9 @@ cron cycle. A thin `listen(callback)` loop is also provided for daemon-style use
 The server acks-and-deletes on receive; pass `journal=True` to have every
 parsed message appended to `<account>.inbox.jsonl` *before* it is acked, so a
 crash downstream can never lose one. Envelopes that cannot be decrypted (e.g.
-Sealed Sender v2, or an invalid/expired sender certificate) are always preserved
-raw in `<account>.undecryptable.jsonl` instead of being destroyed by the ack.
+an unsupported sealed-sender version, or an invalid/expired sender certificate)
+are always preserved raw in `<account>.undecryptable.jsonl` instead of being
+destroyed by the ack.
 
 ---
 

@@ -108,17 +108,53 @@ def encode_prekey_signal_message(registration_id, prekey_id, signed_prekey_id, b
     return data
 
 
+def encode_reaction(emoji, target_author_aci, target_sent_timestamp, remove=False):
+    """Encode a ``DataMessage.Reaction`` (field 16).
+
+    ``emoji`` is the reaction (empty + ``remove=True`` to un-react);
+    ``target_author_aci`` is the ACI of the message's author (string form, also
+    emitted as the 16-byte ``targetAuthorAciBinary`` when it parses as a UUID);
+    ``target_sent_timestamp`` is the reacted-to message's timestamp.
+    """
+    data = b""
+    if emoji:
+        data += encode_string_field(P.REACTION_EMOJI, emoji)
+    if remove:
+        data += encode_varint_field(P.REACTION_REMOVE, 1)
+    if target_author_aci:
+        data += encode_string_field(P.REACTION_TARGET_AUTHOR_ACI, target_author_aci)
+    data += encode_varint_field(P.REACTION_TARGET_SENT_TIMESTAMP, target_sent_timestamp)
+    if target_author_aci:
+        try:
+            import uuid as _uuid
+            data += encode_bytes_field(P.REACTION_TARGET_AUTHOR_ACI_BINARY,
+                                       _uuid.UUID(target_author_aci).bytes)
+        except (ValueError, AttributeError):
+            pass
+    return data
+
+
+def encode_group_context_v2(master_key, revision, group_change=None):
+    """Encode a ``GroupContextV2`` (``DataMessage`` field 15)."""
+    data = encode_bytes_field(P.GROUP_V2_MASTER_KEY, master_key)
+    data += encode_varint_field(P.GROUP_V2_REVISION, revision)
+    if group_change:
+        data += encode_bytes_field(P.GROUP_V2_GROUP_CHANGE, group_change)
+    return data
+
+
 def encode_data_message(body_text, timestamp_ms, profile_key=None,
-                        attachment_pointers=None):
+                        attachment_pointers=None, reaction_bytes=None,
+                        group_v2_bytes=None):
     """Encode a DataMessage matching what the Signal app emits for a text message.
 
     Fields (per SignalService.proto): body(1), attachments(2), expireTimer(5),
-    profileKey(6), timestamp(7), requiredProtocolVersion(12),
-    expireTimerVersion(23), emitted in numeric order like real clients. The
-    profileKey is required for the primary to attribute and display the
-    message. ``attachment_pointers`` are serialized ``AttachmentPointer``
+    profileKey(6), timestamp(7), requiredProtocolVersion(12), groupV2(15),
+    reaction(16), expireTimerVersion(23), emitted in numeric order like real
+    clients. The profileKey is required for the primary to attribute and display
+    the message. ``attachment_pointers`` are serialized ``AttachmentPointer``
     protos (see :mod:`attachments`); ``body_text`` may be empty for an
-    attachment-only message.
+    attachment-only, reaction, or group-context message.
     """
     data = b""
     if body_text:
@@ -130,6 +166,10 @@ def encode_data_message(body_text, timestamp_ms, profile_key=None,
         data += encode_bytes_field(P.DATA_PROFILE_KEY, profile_key)  # 32 bytes
     data += encode_varint_field(P.DATA_TIMESTAMP, timestamp_ms)
     data += encode_varint_field(P.DATA_REQUIRED_PROTOCOL_VERSION, 0)
+    if group_v2_bytes:
+        data += encode_bytes_field(P.DATA_GROUP_V2, group_v2_bytes)
+    if reaction_bytes:
+        data += encode_bytes_field(P.DATA_REACTION, reaction_bytes)
     data += encode_varint_field(P.DATA_EXPIRE_TIMER_VERSION, 1)
     return data
 
@@ -214,13 +254,16 @@ def push_pad(content: bytes) -> bytes:
 
 def pad_content(body_text, destination_aci=None, timestamp_ms=None,
                 profile_key=None, destination_e164=None,
-                attachment_pointers=None):
+                attachment_pointers=None, reaction_bytes=None,
+                group_v2_bytes=None):
     """Encode a Content protobuf and apply Signal's 0x80 transport padding."""
     if timestamp_ms is None:
         timestamp_ms = int(time.time() * 1000)
 
     data_msg = encode_data_message(body_text, timestamp_ms, profile_key=profile_key,
-                                   attachment_pointers=attachment_pointers)
+                                   attachment_pointers=attachment_pointers,
+                                   reaction_bytes=reaction_bytes,
+                                   group_v2_bytes=group_v2_bytes)
 
     if destination_aci is not None:
         # Note-to-Self: wrap inside SyncMessage.Sent
@@ -273,7 +316,8 @@ def find_account_config(account_selector=None, data_dir=None):
 
 
 def _prepare_outgoing(config_data, text, recipient, timestamp_ms, base_url,
-                      drop_ids=(), force_bundle=False, attachment_pointers=None):
+                      drop_ids=(), force_bundle=False, attachment_pointers=None,
+                      reaction_bytes=None, group_v2_bytes=None):
     """Build the encrypted per-device messages for one send, mutating ``config_data``.
 
     Runs UNDER the account-store lock: it reads and advances the shared
@@ -322,7 +366,9 @@ def _prepare_outgoing(config_data, text, recipient, timestamp_ms, base_url,
         return pad_content(text, destination_aci=destination_aci,
                            timestamp_ms=timestamp_ms, profile_key=our_profile_key,
                            destination_e164=our_number if is_note_to_self else None,
-                           attachment_pointers=attachment_pointers)
+                           attachment_pointers=attachment_pointers,
+                           reaction_bytes=reaction_bytes,
+                           group_v2_bytes=group_v2_bytes)
 
     def encrypt_whisper(device_id, reg_id):
         """Encrypt on the stored session (Double Ratchet WHISPER). No fetch."""
@@ -409,13 +455,18 @@ def _prepare_outgoing(config_data, text, recipient, timestamp_ms, base_url,
 
 
 def send_message_native(config_path, text, recipient=None, base_url=DEFAULT_BASE_URL,
-                        raise_on_error=False, attachments=None):
+                        raise_on_error=False, attachments=None, reaction_bytes=None,
+                        group_v2_bytes=None):
     """Encrypt and send to Note-to-Self (or a recipient) natively.
 
     ``attachments`` is an optional list of file paths (or ``bytes``): each is
     encrypted and uploaded to Signal's CDN first (network, outside the account
     lock), then referenced from the message as ``DataMessage.attachments``
     pointers. ``text`` may be empty for an attachment-only message.
+
+    ``reaction_bytes`` / ``group_v2_bytes`` are pre-encoded ``DataMessage``
+    submessage bodies (see :func:`encode_reaction` / :func:`encode_group_context_v2`)
+    that are embedded in the outgoing ``DataMessage``; ``text`` may be empty.
 
     Concurrency: all crypto-state mutation happens inside
     :func:`store.locked_account` — the config is reloaded fresh under the lock,
@@ -470,7 +521,8 @@ def send_message_native(config_path, text, recipient=None, base_url=DEFAULT_BASE
         with locked_account(config_path) as config_data:
             outgoing, target_recipient, headers = _prepare_outgoing(
                 config_data, text, recipient, timestamp_ms, base_url,
-                attachment_pointers=attachment_pointers)
+                attachment_pointers=attachment_pointers,
+                reaction_bytes=reaction_bytes, group_v2_bytes=group_v2_bytes)
     except SignalAPIError as e:
         return fail(e, f"error preparing message: {e.message} (HTTP {e.code})")
 
@@ -507,7 +559,8 @@ def send_message_native(config_path, text, recipient=None, base_url=DEFAULT_BASE
                 outgoing, target_recipient, headers = _prepare_outgoing(
                     config_data, text, recipient, timestamp_ms, base_url,
                     drop_ids=drop_ids, force_bundle=True,
-                    attachment_pointers=attachment_pointers)
+                    attachment_pointers=attachment_pointers,
+                    reaction_bytes=reaction_bytes, group_v2_bytes=group_v2_bytes)
             if not outgoing:
                 return fail(SendError("no target devices after reconcile"),
                             "no target devices after reconcile")

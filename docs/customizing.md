@@ -156,13 +156,15 @@ the Content type, the wrapper:
   `attachments.download_attachment(pointer, dest_dir)` or CLI
   `receive --save-attachments DIR`. Live-proven both directions (2026-07-01):
   agent→phone renders, phone→agent downloads + decrypts.
-- **Reactions / typing / receipts:** these are their own `Content` oneof members
-  (`DataMessage.reaction`, `TypingMessage`=Content field 6,
-  `ReceiptMessage`=Content field 5). Add an `encode_*` for the member and a branch
-  in `encode_content`.
-- **Group messages:** add the `GroupContextV2` (`DataMessage` field 15) and send
-  to each member's devices — the send loop already handles multi-device fan-out
-  and `409`/`410` reconciliation; you supply the recipient list.
+- **Reactions:** implemented — `send_reaction(emoji, target_author, timestamp)`
+  (or `encode_reaction(...)`); carried as `DataMessage.reaction` (field 16).
+- **Typing / receipts:** still open — their own `Content` oneof members
+  (`TypingMessage`=Content field 6, `ReceiptMessage`=Content field 5). Add an
+  `encode_*` for the member and a branch in `encode_content`.
+- **Group messages:** `send_group(text, members=…, master_key=…, revision=…)`
+  embeds `GroupContextV2` (`DataMessage` field 15, `encode_group_context_v2`) and
+  fans out to each supplied member's devices. Group-state fetch and server-side
+  group authorization/endorsement are not implemented.
 
 **Rule:** every field number and default in these encoders is transcribed from
 `SignalService.proto`. When extending, open the proto for the message you're
@@ -214,10 +216,15 @@ python -m pytest tests/ -q
 
 ## 7. Known gaps (open extension points)
 
-- **Sealed Sender v2 (Envelope type 6)** inbound is not implemented. Sealed
-  Sender **v1** (`0x11`) is unwrapped and its sender certificate validated; v2
-  (`0x22`/`0x23`) and non-PreKey/whisper inner types are quarantined (kept raw in
-  `<account>.undecryptable.jsonl` for replay).
-- **SPQR out-of-order handling** can throw `KeyAlreadyRequested` on
-  significantly out-of-order whispers; in-order turn-by-turn is solid.
-- **Reactions / groups** are not implemented (§4 above are the seams).
+- **Sealed Sender** v1 (`0x11`) and v2 (`0x22`/`0x23`) inbound are unwrapped and
+  their sender certificates validated. Non-PreKey/whisper inner types
+  (`SENDERKEY_MESSAGE`, `PLAINTEXT_CONTENT`) are quarantined (kept raw in
+  `<account>.undecryptable.jsonl` for replay). v2 needs `cryptography>=44`
+  (AES-GCM-SIV); on older versions v2 is quarantined and v1 still works.
+- **SPQR deep out-of-order** (jumping a whole epoch) still fails, identically to
+  Signal's own Rust crate; in-epoch reordering and at-least-once redelivery are
+  handled (a redelivery is dropped as a duplicate, never fatal).
+- **Groups are explicit-member only.** `send_group(members=…, master_key=…,
+  revision=…)` fans out with a `GroupContextV2`; `send_reaction(...)` sends a
+  reaction. There is no group-state fetch, server-side endorsement, or own-device
+  "sent" sync transcript for groups yet.

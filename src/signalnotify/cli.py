@@ -10,7 +10,7 @@ import sys
 from ._version import __version__
 from .config import load_config
 from .engine import notify_from_config
-from .sender import send_message
+from .sender import send_message, send_reaction
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     lp = sub.add_parser("link", help="QR-link this device to your Signal account")
     lp.add_argument("-n", "--name", default="signal-notify", help="linked device name")
+
+    rp = sub.add_parser("react", help="react to a message in a conversation")
+    rp.add_argument("emoji", nargs="?", default="", help="reaction emoji")
+    rp.add_argument("--author", required=True,
+                    help="ACI of the reacted-to message's author")
+    rp.add_argument("--timestamp", type=int, required=True,
+                    help="sent-timestamp of the reacted-to message")
+    rp.add_argument("--to", "--recipient", dest="recipient",
+                    help="conversation to react in (default: Note-to-Self)")
+    rp.add_argument("--remove", action="store_true", help="remove the reaction")
+    rp.add_argument("-a", "--account", help="account selector (number / ACI)")
 
     rcp = sub.add_parser(
         "receive",
@@ -102,6 +113,16 @@ def main(argv=None) -> int:
                 attachments=args.attach or None,
             )
         except Exception as e:  # e.g. DNS/offline: URLError escapes the shield
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        return 0 if ok else 1
+
+    if args.cmd == "react":
+        try:
+            ok = send_reaction(args.emoji, args.author, args.timestamp,
+                               recipient=args.recipient, remove=args.remove,
+                               account=args.account)
+        except Exception as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 1
         return 0 if ok else 1
