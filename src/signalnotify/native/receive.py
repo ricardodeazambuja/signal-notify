@@ -27,7 +27,7 @@ from .messaging import (encode_bytes_field, encode_string_field,
                         encode_varint_field)
 from .provisioning import _ws_connect
 from .ratchet import (account_keys_from_config, accept_prekey, ratchet_decrypt,
-                      session_from_json, session_to_json, Session)
+                      session_from_json, session_to_json, Session, _same_identity)
 from .registration import DEFAULT_USER_AGENT, DEFAULT_WS_URL, decode_proto
 
 log = logging.getLogger(__name__)
@@ -258,7 +258,9 @@ def _self_ids(config_data: dict) -> set:
 
 
 def _decrypt_envelope(env: dict, account_keys: dict, sessions: dict,
-                      our_aci: str | None = None) -> tuple[bytes | None, str | None, int | None]:
+                      our_aci: str | None = None, self_ids: set | None = None,
+                      device_id: int | None = None
+                      ) -> tuple[bytes | None, str | None, int | None]:
     """Decrypt one Envelope field-map. Returns ``(plaintext, source, timestamp)``.
 
     Updates ``sessions`` (the ``nativeRatchetSessions`` map) in place. Returns
@@ -294,10 +296,66 @@ def _decrypt_envelope(env: dict, account_keys: dict, sessions: dict,
         return plaintext, source, ts
 
     if etype == TYPE_SEALED:
-        # Sealed-sender (unidentified) delivery. Unwrapping needs the
-        # sealed-sender protocol; not required for the phone's own Note-to-Self
-        # sync transcripts, which are sender-authenticated. Left as a gap.
-        raise NotImplementedError("sealed-sender (type 6) unwrap not implemented")
+        # Sealed-sender (unidentified) delivery. Unwrap Sealed Sender v1 — see
+        # signalnotify/native/sealed_sender.py. An invalid sender certificate,
+        # a bad MAC, or an unsupported version raises (→ NotImplementedError,
+        # which the caller quarantines and can replay if support is added).
+        from .sealed_sender import SealedSenderError, unwrap_v1
+
+        try:
+            res = unwrap_v1(account_keys, content)
+        except SealedSenderError as exc:
+            raise NotImplementedError(f"sealed-sender: {exc}")
+
+        sender_uuid = res["sender_uuid"]
+        sender_dev = res["sender_device"]
+        sender_identity = res["sender_identity"]
+
+        # Reject a sealed envelope from our own account/device (libsignal
+        # SealedSenderSelfSend). Its session key would collide with the one the
+        # Note-to-Self send path uses, letting a self-send clobber it.
+        if (sender_uuid and self_ids and sender_uuid in self_ids
+                and (device_id is None or sender_dev == device_id)):
+            raise NotImplementedError("sealed-sender: self-send rejected")
+
+        # The sender is server-attested by this point (unwrap_v1 rejects an
+        # invalid certificate), so the uuid is trustworthy.
+        source = sender_uuid
+        sealed_key = f"{sender_uuid}:{sender_dev}"
+        inner = res["inner"]
+
+        try:
+            if res["msg_type"] == 1:  # PREKEY_MESSAGE
+                session, plaintext = accept_prekey(account_keys, inner)
+                if not _same_identity(session.their_identity, sender_identity):
+                    raise NotImplementedError(
+                        "sealed-sender: inner PreKey identity != certificate identity")
+                sessions[sealed_key] = session_to_json(session)
+                return plaintext, source, ts
+
+            if res["msg_type"] == 2:  # MESSAGE (whisper)
+                stored = sessions.get(sealed_key)
+                if stored is None:
+                    raise ValueError(
+                        f"sealed: no session for {sealed_key} (whisper before prekey)")
+                session = session_from_json(stored)
+                if not _same_identity(session.their_identity, sender_identity):
+                    raise NotImplementedError(
+                        "sealed-sender: session identity != certificate identity")
+                plaintext = ratchet_decrypt(session, inner)
+                sessions[sealed_key] = session_to_json(session)
+                return plaintext, source, ts
+        except (NotImplementedError, ValueError):
+            raise
+        except (KeyError, IndexError, TypeError) as e:
+            # A malformed inner message must quarantine, never poison the loop.
+            raise NotImplementedError(f"sealed-sender: malformed inner message: {e}")
+
+        # SENDERKEY_MESSAGE (7) / PLAINTEXT_CONTENT (8) and anything else: we
+        # cannot decrypt these, so keep raising so the envelope is QUARANTINED
+        # (and replayable) rather than acked and deleted forever.
+        raise NotImplementedError(
+            f"sealed-sender: unsupported inner message type {res['msg_type']}")
 
     # Receipts / plaintext-content envelopes carry no ciphertext to decrypt.
     return None, source, ts
@@ -474,7 +532,8 @@ async def _receive_async(config_path, timeout, max_messages, ws_url,
                     account_keys = account_keys_from_config(config_data)
                     sessions = config_data.setdefault("nativeRatchetSessions", {})
                     plaintext, source, ts = _decrypt_envelope(env, account_keys,
-                                                              sessions, aci)
+                                                              sessions, aci,
+                                                              self_ids, device_id)
                 if plaintext is not None:
                     msg = parse_content(plaintext, self_ids, source, ts)
                     if msg is not None:

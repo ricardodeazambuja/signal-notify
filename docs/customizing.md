@@ -214,9 +214,10 @@ python -m pytest tests/ -q
 
 ## 7. Known gaps (open extension points)
 
-- **Sealed-sender (Envelope type 6)** inbound is `NotImplementedError`. Note-to-Self
-  sync transcripts are sender-authenticated (not sealed), so this doesn't block
-  the primary use case, but sealed direct messages are skipped on receive.
+- **Sealed Sender v2 (Envelope type 6)** inbound is not implemented. Sealed
+  Sender **v1** (`0x11`) is unwrapped and its sender certificate validated; v2
+  (`0x22`/`0x23`) and non-PreKey/whisper inner types are quarantined (kept raw in
+  `<account>.undecryptable.jsonl` for replay).
 - **SPQR out-of-order handling** can throw `KeyAlreadyRequested` on
   significantly out-of-order whispers; in-order turn-by-turn is solid.
 - **Reactions / groups** are not implemented (§4 above are the seams).

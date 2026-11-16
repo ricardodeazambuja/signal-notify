@@ -253,7 +253,7 @@ Receiving is fully native (`ratchet.py` + `receive.py`).
   * **PREKEY (3):** responder X3DH/**PQXDH** (`accept_prekey`) establishes a new session, decapsulating the **round-3 Kyber-1024** ciphertext (via `native/pure/kyber1024.py`; *not* ML-KEM — see [Caveats #1](native_caveats.md)) and initialising the **SPQR** ratchet, then decrypts the embedded `SignalMessage`.
   * **whisper (1):** continue an existing Double Ratchet session (DH-ratchet on a new peer ratchet key; skipped-message-key store for out-of-order delivery).
   * **receipt (5) / plaintext (8):** no ciphertext.
-  * **sealed-sender (6):** `NotImplementedError` — a documented gap (the phone's own Note-to-Self sync transcripts are sender-authenticated, not sealed).
+  * **sealed-sender (6):** Sealed Sender **v1** (`0x11`) is unwrapped (`native/sealed_sender.py`): the sender certificate is validated against Signal's pinned server certificates (signature, identity binding to the key recovered from `encryptedStatic`, expiry), then the embedded PreKey/whisper message is decrypted and its identity key checked against the certificate. A bad MAC, an invalid/expired certificate, an unknown signer id, Sealed Sender v2 (`0x22`/`0x23`) or an unsupported inner type is **rejected and quarantined** (never decrypted, never keyed into a session).
 * **Padding:** the decrypted plaintext is de-padded by scanning back over trailing `0x00`s to the `0x80` transport-padding marker (`_strip_push_padding`) before the `Content` is parsed.
 * **One-shot by design:** `receive()` drains what is queued (waiting up to `timeout` for new traffic), acks, and returns — a fit for a per-cycle cron consumer. `listen(callback)` loops it for daemon use.
 
@@ -281,10 +281,10 @@ directions run the full **PQXDH + Double Ratchet + SPQR + Kyber-1024** stack.
 
 Remaining gaps:
 
-* **Sealed-sender (type 6) inbound is not implemented.** Unidentified-sender
-  envelopes raise `NotImplementedError`. Note-to-Self sync transcripts are
-  sender-authenticated (not sealed), so this does not block the primary use case,
-  but sealed direct messages are skipped on receive.
+* **Sealed Sender v2 inbound is not implemented.** v1 (`0x11`) is unwrapped and
+  validated; v2 (`0x22`/`0x23`, the flat multi-recipient format) and non-PreKey/
+  whisper inner types (`SENDERKEY_MESSAGE`, `PLAINTEXT_CONTENT`) are quarantined
+  rather than delivered.
 * **SPQR out-of-order handling is imperfect.** Significantly out-of-order whispers
   can throw `KeyAlreadyRequested`; in-order (turn-by-turn) traffic is solid.
 * **No reactions / groups yet.** Attachments are implemented
